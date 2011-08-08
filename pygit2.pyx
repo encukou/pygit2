@@ -29,6 +29,13 @@ cdef extern from "Python.h":
     cdef PyErr_SetFromErrno(type)
 
 cdef extern from "git2.h":
+    # common.h
+    ctypedef struct git_strarray:
+        char **strings
+        size_t count
+
+    void git_strarray_free(git_strarray *array)
+
     # types.h
     ctypedef long git_time_t
 
@@ -41,6 +48,7 @@ cdef extern from "git2.h":
     cdef struct git_revwalk
     cdef struct git_odb
     cdef struct git_odb_object
+    cdef struct git_reference
     cdef struct git_time:
         git_time_t time
         int offset
@@ -49,6 +57,8 @@ cdef extern from "git2.h":
         char *email
         git_time when
     ctypedef enum git_otype:
+        pass
+    ctypedef enum git_rtype:
         pass
 
     # oid.h
@@ -107,6 +117,22 @@ cdef extern from "git2.h":
     int git_revwalk_next(git_oid *oid, git_revwalk *walk)
     int git_revwalk_hide(git_revwalk *walk, git_oid *oid)
     void git_revwalk_reset(git_revwalk *walker)
+
+    # refs.h
+    int git_reference_lookup(git_reference **reference_out, git_repository *repo, char *name)
+    char *git_reference_target(git_reference *ref)
+    int git_reference_set_target(git_reference *ref, char *target)
+    int git_reference_create_oid(git_reference **ref_out, git_repository *repo, char *name, git_oid *id, int force)
+    char *git_reference_name(git_reference *ref)
+    git_oid *git_reference_oid(git_reference *ref)
+    int git_reference_set_oid(git_reference *ref, git_oid *id)
+    int git_reference_rename(git_reference *ref, char *new_name, int force)
+    git_rtype git_reference_type(git_reference *ref)
+    int git_reference_resolve(git_reference **resolved_ref, git_reference *ref)
+    int git_reference_packall(git_repository *repo)
+    int git_reference_listall(git_strarray *array, git_repository *repo, unsigned int list_flags)
+    int git_reference_delete(git_reference *ref)
+    int git_reference_create_symbolic(git_reference **ref_out, git_repository *repo, char *name, char *target, int force)
 
     # signature.h
     int git_signature_new(git_signature **sig_out, char *name, char *email, git_time_t time, int offset)
@@ -455,6 +481,87 @@ cdef class Tag(_GitObject):
                 return None
             return message
 
+cdef class Reference(object):
+    cdef git_reference *reference
+
+    property target:
+        def __get__(self):
+            cdef char *name
+
+            name = git_reference_target(self.reference);
+            if name is NULL:
+                raise ValueError("Not target available")
+
+            return name
+
+        def __set__(self, char *name):
+            err = git_reference_set_target(self.reference, name)
+            if err < 0:
+                Error_set(err)
+
+    property name:
+        def __get__(self):
+            return git_reference_name(self.reference)
+
+    property type:
+        def __get__(self):
+            return git_reference_type(self.reference)
+
+    property sha:
+        def __get__(self):
+            cdef git_oid *oid
+
+            oid = git_reference_oid(self.reference)
+            if oid is NULL:
+                raise ValueError(
+                     "sha is only available if the reference is direct "
+                     "(i.e. not symbolic)")
+
+            return git_oid_to_py_str(oid)
+
+        def __set__(self, sha):
+            cdef git_oid oid
+            cdef int err
+
+            # 1- Get the oid from the sha
+            py_str_to_git_oid(sha, &oid)
+
+            # 2- Set the oid
+            err = git_reference_set_oid(self.reference, &oid)
+            if err < 0:
+                Error_set(err)
+
+    def rename(self, char *name):
+        cdef int err
+
+        err = git_reference_rename(self.reference, name, 0)
+        if err < 0:
+            Error_set(err)
+
+    def resolve(self):
+        cdef git_reference *c_reference
+        cdef int err
+
+        err = git_reference_resolve(&c_reference, self.reference)
+        if err < 0:
+            Error_set(err)
+
+        return wrap_reference(c_reference)
+
+    def delete(self):
+        cdef int err
+
+        err = git_reference_delete(self.reference)
+        if err < 0:
+            Error_set(err)
+
+        self.reference = NULL
+
+cdef wrap_reference(git_reference *c_reference):
+    reference = Reference()
+    reference.reference = c_reference
+    return reference
+
 cdef class Walker(object):
     cdef git_revwalk *walk
     cdef Repository repo
@@ -675,3 +782,60 @@ cdef class Repository(object):
                 return None
 
             return c_path
+
+    def lookup_reference(self, char *name):
+        cdef git_reference *c_reference
+        cdef int err
+
+        err = git_reference_lookup(&c_reference, self.repo, name);
+        if err < 0:
+            return Error_set(err)
+
+        return wrap_reference(c_reference);
+
+    def create_reference(self, char *name, hex):
+        cdef git_reference *c_reference
+        cdef git_oid oid
+        cdef int err
+
+        py_str_to_git_oid(hex, &oid)
+
+        err = git_reference_create_oid(&c_reference, self.repo, name, &oid, 0)
+        if err < 0:
+            Error_set(err)
+
+        return wrap_reference(c_reference);
+
+    def create_symbolic_reference(self, char *name, char *target):
+        cdef git_reference *reference
+        cdef int err
+
+        err = git_reference_create_symbolic(&reference, self.repo, name,
+                                            target, 0);
+        if err < 0:
+            Error_set(err)
+
+        return wrap_reference(reference)
+
+    def packall_references(self):
+        cdef int err
+
+        err = git_reference_packall(self.repo)
+        if err < 0:
+            Error_set(err)
+
+    def listall_references(self, unsigned list_flags=git2.GIT_REF_LISTALL):
+        cdef git_strarray c_result
+        cdef int index
+
+        err = git_reference_listall(&c_result, self.repo, list_flags);
+        if err < 0:
+            Error_set(err)
+
+        try:
+            result = []
+            for index in range(c_result.count):
+                result.append(c_result.strings[index])
+            return tuple(result)
+        finally:
+            git_strarray_free(&c_result)

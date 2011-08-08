@@ -39,6 +39,7 @@ cdef extern from "git2.h":
     enum:
         GIT_REF_OID
         GIT_REF_SYMBOLIC
+        GIT_REF_LISTALL
 
         GIT_SORT_TIME
         GIT_SORT_REVERSE
