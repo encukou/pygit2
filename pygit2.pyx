@@ -38,6 +38,7 @@ cdef extern from "git2.h":
     cdef struct git_tree
     cdef struct git_tag
     cdef struct git_commit
+    cdef struct git_revwalk
     cdef struct git_time:
         git_time_t time
         int offset
@@ -58,6 +59,7 @@ cdef extern from "git2.h":
     # commit.h
     char *git_commit_message_short(git_commit *commit)
     char *git_commit_message(git_commit *commit)
+    int git_commit_lookup(git_commit **commit, git_repository *repo, git_oid *id)
 
     # object.h
     int git_object_lookup(git_object **object, git_repository *repo,
@@ -68,6 +70,15 @@ cdef extern from "git2.h":
 
     # repository.h
     int git_repository_open(git_repository **repository, char *path)
+
+    # revwalk.h
+    void git_revwalk_sorting(git_revwalk *walk, unsigned int sort_mode)
+    int git_revwalk_new(git_revwalk **walker, git_repository *repo)
+    void git_revwalk_free(git_revwalk *walk)
+    int git_revwalk_push(git_revwalk *walk, git_oid *oid)
+    int git_revwalk_next(git_oid *oid, git_revwalk *walk)
+    int git_revwalk_hide(git_revwalk *walk, git_oid *oid)
+    void git_revwalk_reset(git_revwalk *walker)
 
     # signature.h
     int git_signature_new(git_signature **sig_out, char *name, char *email, git_time_t time, int offset)
@@ -394,6 +405,48 @@ cdef class Tag(_GitObject):
                 return None
             return message
 
+cdef class Walker(object):
+    cdef git_revwalk *walk
+    cdef Repository repo
+
+    def __cinit__(self, repo):
+        self.repo = repo
+
+    def __del__(self):
+        git_revwalk_free(self.walk)
+
+    def __next__(self):
+        cdef git_oid oid
+        cdef int err
+        cdef git_commit *commit
+        cdef Commit py_commit
+
+        err = git_revwalk_next(&oid, self.walk)
+        if err < 0:
+            raise Error_set(err)
+
+        err = git_commit_lookup(&commit, self.repo.repo, &oid);
+        if err < 0:
+            return Error_set(err);
+
+        py_commit = Commit()
+        py_commit.obj = <git_object*>commit
+        py_commit.repo = self.repo
+        return py_commit
+
+    def __iter__(self):
+        return self
+
+    def hide(self, hex):
+        cdef int err
+        cdef git_oid oid
+
+        py_str_to_git_oid(hex, &oid)
+
+        err = git_revwalk_hide(self.walk, &oid)
+        if err < 0:
+            return Error_set(err)
+
 cdef class Repository(object):
     cdef git_repository* repo
 
@@ -462,6 +515,37 @@ cdef class Repository(object):
             raise RuntimeError
 
         return git_oid_to_py_str(&c_oid)
+
+    def walk(self, value, unsigned int sort):
+        cdef git_revwalk *walk
+        cdef Walker walker
+        cdef git_oid oid
+
+        if value is not None and not isinstance(value, basestring):
+            raise TypeError(value)
+
+        err = git_revwalk_new(&walk, self.repo);
+        if err < 0:
+            return Error_set(err);
+
+        try:
+            # Sort
+            git_revwalk_sorting(walk, sort)
+
+            # Push
+            if value is not None:
+                py_str_to_git_oid(value, &oid)
+                err = git_revwalk_push(walk, &oid)
+                if err < 0:
+                    Error_set(err)
+
+            walker = Walker(self)
+            walker.walk = walk
+            return walker
+
+        except Exception:
+            git_revwalk_free(walk)
+            raise
 
     def __getitem__(self, value):
         cdef git_oid oid
