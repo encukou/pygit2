@@ -81,7 +81,8 @@ cdef extern from "git2.h":
     # commit.h
     char *git_commit_message_short(git_commit *commit)
     char *git_commit_message(git_commit *commit)
-    int git_commit_lookup(git_commit **commit, git_repository *repo, git_oid *id)
+    int git_commit_lookup(git_commit **commit, git_repository *repo,
+        git_oid *id)
     unsigned int git_commit_parentcount(git_commit *commit)
     git_oid *git_commit_parent_oid(git_commit *commit, unsigned int n)
     int git_commit_create(git_oid *oid, git_repository *repo,
@@ -144,7 +145,8 @@ cdef extern from "git2.h":
         void (*free)(git_odb_stream *stream)
 
     # odb.h
-    int git_odb_open_wstream(git_odb_stream **stream, git_odb *db, size_t size, git_otype type)
+    int git_odb_open_wstream(git_odb_stream **stream, git_odb *db, size_t size,
+        git_otype type)
     void git_odb_object_close(git_odb_object *object)
     size_t git_odb_object_size(git_odb_object *object)
     void *git_odb_object_data(git_odb_object *object)
@@ -173,10 +175,12 @@ cdef extern from "git2.h":
     void git_revwalk_reset(git_revwalk *walker)
 
     # refs.h
-    int git_reference_lookup(git_reference **reference_out, git_repository *repo, char *name)
+    int git_reference_lookup(git_reference **reference_out,
+        git_repository *repo, char *name)
     char *git_reference_target(git_reference *ref)
     int git_reference_set_target(git_reference *ref, char *target)
-    int git_reference_create_oid(git_reference **ref_out, git_repository *repo, char *name, git_oid *id, int force)
+    int git_reference_create_oid(git_reference **ref_out, git_repository *repo,
+        char *name, git_oid *id, int force)
     char *git_reference_name(git_reference *ref)
     git_oid *git_reference_oid(git_reference *ref)
     int git_reference_set_oid(git_reference *ref, git_oid *id)
@@ -184,15 +188,19 @@ cdef extern from "git2.h":
     git_rtype git_reference_type(git_reference *ref)
     int git_reference_resolve(git_reference **resolved_ref, git_reference *ref)
     int git_reference_packall(git_repository *repo)
-    int git_reference_listall(git_strarray *array, git_repository *repo, unsigned int list_flags)
+    int git_reference_listall(git_strarray *array, git_repository *repo,
+        unsigned int list_flags)
     int git_reference_delete(git_reference *ref)
-    int git_reference_create_symbolic(git_reference **ref_out, git_repository *repo, char *name, char *target, int force)
+    int git_reference_create_symbolic(git_reference **ref_out,
+        git_repository *repo, char *name, char *target, int force)
 
     # signature.h
-    int git_signature_new(git_signature **sig_out, char *name, char *email, git_time_t time, int offset)
+    int git_signature_new(git_signature **sig_out, char *name, char *email,
+        git_time_t time, int offset)
 
     # status.h
-    int git_status_foreach(git_repository *repo, int (*callback)(char *, unsigned int, void *), void *payload)
+    int git_status_foreach(git_repository *repo, int (*callback)(char *,
+        unsigned int, void *), void *payload)
 
     # tag.h
     git_otype git_tag_type(git_tag *tag)
@@ -200,7 +208,8 @@ cdef extern from "git2.h":
     char *git_tag_name(git_tag *tag)
     git_signature *git_tag_tagger(git_tag *tag)
     char *git_tag_message(git_tag *tag)
-    int git_tag_create(git_oid *oid, git_repository *repo, char *tag_name, git_object *target, git_signature *tagger, char *message, int force)
+    int git_tag_create(git_oid *oid, git_repository *repo, char *tag_name,
+        git_object *target, git_signature *tagger, char *message, int force)
 
     # tree.h
     git_tree_entry *git_tree_entry_byindex(git_tree *tree, unsigned int idx)
@@ -298,7 +307,8 @@ cdef err_obj(py_obj, int err):
     if err >= 0:
         return
     elif err == git2.GIT_ENOTOID and not isinstance(py_obj, basestring):
-        raise TypeError("Git object id must be 40 byte hexadecimal str, or 20 byte binary str: %.200s" % type(py_obj).__name__)
+        raise TypeError("Git object id must be 40 byte hexadecimal str, "
+                "or 20 byte binary str: %.200s" % type(py_obj).__name__)
     elif err == git2.GIT_ENOTFOUND:
         # KeyError expects the arg to be the missing key.
         raise KeyError(py_obj)
@@ -1156,7 +1166,8 @@ cdef class Repository(object):
             hex[git2.GIT_OID_HEXSZ] = '\0'
             err_str(hex, error);
 
-        err = git_tag_create(&c_oid, self.repo, tag_name, target, c_tagger, message, 0)
+        err = git_tag_create(&c_oid, self.repo, tag_name, target, c_tagger,
+                message, 0)
         git_object_close(target)
         if err < 0:
             raise RuntimeError
