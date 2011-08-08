@@ -125,6 +125,8 @@ cdef extern from "git2.h":
     int git_index_remove(git_index *index, int position)
     int git_index_read(git_index *index)
     int git_tree_create_fromindex(git_oid *oid, git_index *index)
+    void git_index_free(git_index *index)
+    int git_index_open(git_index **index, char *index_path)
 
     # object.h
     int git_object_lookup(git_object **object, git_repository *repo,
@@ -164,6 +166,8 @@ cdef extern from "git2.h":
     git_odb *git_repository_database(git_repository *repo)
     int git_repository_index(git_index **index, git_repository *repo)
     void git_repository_free(git_repository *repo)
+    int git_repository_init(git_repository **repo_out, char *path,
+            unsigned is_bare)
 
     # revwalk.h
     void git_revwalk_sorting(git_revwalk *walk, unsigned int sort_mode)
@@ -355,8 +359,6 @@ cdef int read_status_cb(char *path, unsigned int status_flags,
 cdef py_str_to_git_oid(py_str, git_oid *oid):
     """Convert a Python string with the a SHA to a git_oid
     """
-
-    cdef int err
 
     if not isinstance(py_str, basestring):
         err_obj(py_str, git2.GIT_ENOTOID)
@@ -849,6 +851,11 @@ cdef class IndexEntry(object):
             """SHA for this entry"""
             return git_oid_to_py_str(&self.entry.oid)
 
+    property path:
+        """filename of this entry"""
+        def __get__(self):
+            return self.entry.path
+
 cdef wrap_index_entry(git_index_entry *entry, index):
     """Internal factory function"""
 
@@ -870,12 +877,31 @@ cdef class Index(object):
     cdef Repository repo
     cdef int own_obj
 
-    def __cinit__(self, repo):
+    def __cinit__(self, path, repo=None):
         self.repo = repo
         self.own_obj = 0
 
-    def __init__(self):
-        raise TypeError('This class cannot be instantiated directly')
+    def __init__(self, path):
+        """Open the given file as a bare index (not tied to a Repository)
+
+        Since there is no ODB or working directory behind this index,
+        any Index methods which rely on these (e.g. add) will fail with
+        a GitError.
+
+        If you need to access the index of an actual repository,
+        use the Repository.index wrapper.
+        """
+
+        cdef char *c_path
+        c_path = path
+
+        err_str(path, git_index_open(&self.index, path))
+
+        self.own_obj = 1
+
+    def __del__(self):
+        if self.own_obj:
+            git_index_free(self.index)
 
     def __len__(self):
         return git_index_entrycount(self.index)
@@ -1054,6 +1080,39 @@ cdef class Walker(object):
 
         err(git_revwalk_hide(self.walk, &oid))
 
+    def push(self, sha):
+        """Mark a commit to start traversal from.
+
+        The given SHA must identify a commit on the walked repository.
+
+        The given commit will be used as one of the roots when starting the
+        revision walk.
+        """
+
+        cdef git_oid oid
+
+        py_str_to_git_oid(sha, &oid)
+
+        err(git_revwalk_push(self.walk, &oid))
+
+    def  sort(self, int sort_mode):
+        """Change the sorting mode (this resets the walker).
+        """
+
+        git_revwalk_sorting(self.walk, sort_mode)
+
+    def reset(self):
+        """Reset the walking machinery for reuse.
+
+        This will clear all the pushed and hidden commits, and leave the walker
+        in a blank state (just like at creation) ready to receive new commit
+        pushes and start a new walk.
+
+        The revision walk is automatically reset when a walk is over.
+        """
+
+        git_revwalk_reset(self.walk)
+
 cdef class Repository(object):
     """Git repository
     """
@@ -1061,8 +1120,7 @@ cdef class Repository(object):
     cdef git_repository* repo
     cdef _index
 
-    def __cinit__(self, path):
-        cdef int err
+    def __init__(self, path):
         err_str(path, git_repository_open(&self.repo, path))
 
     def __del__(self):
@@ -1208,7 +1266,7 @@ cdef class Repository(object):
             walker.walk = walk
             return walker
 
-        except Exception:
+        except:
             git_revwalk_free(walk)
             raise
 
@@ -1307,7 +1365,7 @@ cdef class Repository(object):
             if self._index is None:
                 error = git_repository_index(&index, self.repo)
                 if error == git2.GIT_SUCCESS:
-                    py_index = Index.__new__(Index, self)
+                    py_index = Index.__new__(Index, None, repo=self)
                     py_index.index = index
                     self._index = py_index
                 elif error == git2.GIT_EBAREINDEX:
@@ -1462,3 +1520,25 @@ cdef class Repository(object):
 
         finally:
             git_tree_close(c_tree)
+
+def init_repository(char *path, bint bare=False):
+    """Creates a new Git repository in the given directory.
+
+    `path`:  The path to the repository
+    `bare`:  If true, a Git repository without a working directory is created
+        at the pointed path. If false (default), provided path will be
+        considered as the working directory into which the .git directory will
+        be created.
+    """
+
+    cdef git_repository *repo
+    cdef Repository py_repo
+
+    err_str(path, git_repository_init(&repo, path, bare))
+    try:
+        py_repo = _new(Repository)
+        py_repo.repo = repo
+        return py_repo
+    except:
+        git_repository_free(repo)
+        raise
