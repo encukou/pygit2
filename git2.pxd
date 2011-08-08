@@ -39,8 +39,11 @@ cdef extern from "git2.h":
     enum:
         GIT_REF_OID
         GIT_REF_SYMBOLIC
+        GIT_REF_PACKED
         GIT_REF_LISTALL
 
+        GIT_SORT_NONE
+        GIT_SORT_TOPOLOGICAL
         GIT_SORT_TIME
         GIT_SORT_REVERSE
 
@@ -51,6 +54,7 @@ cdef extern from "git2.h":
         GIT_STATUS_INDEX_MODIFIED
         GIT_STATUS_INDEX_DELETED
         GIT_STATUS_INDEX_NEW
+        GIT_STATUS_IGNORED
 
         GIT_ENOTFOUND
         GIT_EOSERR

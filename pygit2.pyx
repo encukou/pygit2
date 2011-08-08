@@ -1,28 +1,31 @@
-"""
-Copyright 2011 Petr Viktorin
+# Copyright 2011 Petr Viktorin
 
-This file is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License, version 2,
-as published by the Free Software Foundation.
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License, version 2,
+# as published by the Free Software Foundation.
 
-In addition to the permissions in the GNU General Public License,
-the authors give you unlimited permission to link the compiled
-version of this file into combinations with other programs,
-and to distribute those combinations without any restriction
-coming from the use of this file.  (The General Public License
-restrictions do apply in other respects; for example, they cover
-modification of the file, and distribution when not linked into
-a combined executable.)
+# In addition to the permissions in the GNU General Public License,
+# the authors give you unlimited permission to link the compiled
+# version of this file into combinations with other programs,
+# and to distribute those combinations without any restriction
+# coming from the use of this file.  (The General Public License
+# restrictions do apply in other respects; for example, they cover
+# modification of the file, and distribution when not linked into
+# a combined executable.)
 
-This file is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-General Public License for more details.
+# This file is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
 
-You should have received a copy of the GNU General Public License
-along with this program; see the file COPYING.  If not, write to
-the Free Software Foundation, 51 Franklin Street, Fifth Floor,
-Boston, MA 02110-1301, USA.
+# You should have received a copy of the GNU General Public License
+# along with this program; see the file COPYING.  If not, write to
+# the Free Software Foundation, 51 Franklin Street, Fifth Floor,
+# Boston, MA 02110-1301, USA.
+
+"""Python bindings for libgit2.
+
+pygit2 is a set of Python bindings to the libgit2 linkable C Git library.
 """
 
 cdef extern from "Python.h":
@@ -217,38 +220,54 @@ cdef git_lasterror():
     else:
         return lasterror
 
+# Constants
 # Workaround for Cython bug 92 (http://trac.cython.org/cython_trac/ticket/92)
 cimport git2
+
+# Object types
 GIT_OBJ_ANY = git2.GIT_OBJ_ANY
-GIT_OBJ_BAD = git2.GIT_OBJ_BAD
 GIT_OBJ_COMMIT = git2.GIT_OBJ_COMMIT
 GIT_OBJ_TREE = git2.GIT_OBJ_TREE
 GIT_OBJ_BLOB = git2.GIT_OBJ_BLOB
 GIT_OBJ_TAG = git2.GIT_OBJ_TAG
-GIT_OBJ_OFS_DELTA = git2.GIT_OBJ_OFS_DELTA
-GIT_OBJ_REF_DELTA = git2.GIT_OBJ_REF_DELTA
+GIT_OBJ_BAD = git2.GIT_OBJ_BAD
 
-GIT_REF_OID = git2.GIT_REF_OID
-GIT_REF_SYMBOLIC = git2.GIT_REF_SYMBOLIC
-
+# Revwalk sort types
+GIT_SORT_NONE = git2.GIT_SORT_NONE
+GIT_SORT_TOPOLOGICAL = git2.GIT_SORT_TOPOLOGICAL
 GIT_SORT_TIME = git2.GIT_SORT_TIME
 GIT_SORT_REVERSE = git2.GIT_SORT_REVERSE
 
+# Reference types
+GIT_REF_OID = git2.GIT_REF_OID
+GIT_REF_SYMBOLIC = git2.GIT_REF_SYMBOLIC
+GIT_REF_PACKED = git2.GIT_REF_PACKED
+GIT_REF_LISTALL = git2.GIT_REF_LISTALL
+
+## Git status flags
 GIT_STATUS_CURRENT = git2.GIT_STATUS_CURRENT
-GIT_STATUS_WT_DELETED = git2.GIT_STATUS_WT_DELETED
-GIT_STATUS_WT_MODIFIED = git2.GIT_STATUS_WT_MODIFIED
-GIT_STATUS_WT_NEW = git2.GIT_STATUS_WT_NEW
+
+# Flags for index status
+GIT_STATUS_INDEX_NEW = git2.GIT_STATUS_INDEX_NEW
 GIT_STATUS_INDEX_MODIFIED = git2.GIT_STATUS_INDEX_MODIFIED
 GIT_STATUS_INDEX_DELETED = git2.GIT_STATUS_INDEX_DELETED
-GIT_STATUS_INDEX_NEW = git2.GIT_STATUS_INDEX_NEW
+
+# Flags for worktree status
+GIT_STATUS_WT_NEW = git2.GIT_STATUS_WT_NEW
+GIT_STATUS_WT_MODIFIED = git2.GIT_STATUS_WT_MODIFIED
+GIT_STATUS_WT_DELETED = git2.GIT_STATUS_WT_DELETED
+
+# Flags for ignored files
+GIT_STATUS_IGNORED = git2.GIT_STATUS_IGNORED
 
 cdef class Repository
 
 class GitError(Exception):
+    """Thrown when something is wrong in libgit2."""
     pass
 
 cdef Error_type(int err):
-    """Return the correct Python exception class based on err code
+    """Return the correct Python exception class based on Git error code
     """
     return {
             git2.GIT_ENOTFOUND: KeyError,
@@ -259,7 +278,7 @@ cdef Error_type(int err):
         }.get(err, GitError)
 
 cdef Error_set_str(int err, message):
-    """Raise an appropriate Git exception
+    """Raise exception based on the Git error code and a string message
     """
     if err == git2.GIT_ENOTFOUND:
         raise KeyError, message
@@ -267,6 +286,8 @@ cdef Error_set_str(int err, message):
         raise Error_type(err), "%s: %s" % (message, git_lasterror())
 
 cdef Error_set_py_obj(int err, py_obj):
+    """Raise exception based on Git error code and associated Python object
+    """
     assert err < 0
 
     if err == git2.GIT_ENOTOID and not isinstance(py_obj, basestring):
@@ -282,6 +303,7 @@ cdef Error_set_py_obj(int err, py_obj):
     raise Error_type(err)("%s: %s" % (message, git_lasterror()))
 
 cdef Error_set(int err):
+    """Raise an exception based on the Git error code"""
     assert err < 0
     if err == git2.GIT_ENOTFOUND:
         # KeyError expects the arg to be the missing key. If the caller
@@ -293,6 +315,7 @@ cdef Error_set(int err):
     raise Error_type(err)(git_lasterror())
 
 cdef git_otype int_to_loose_object_type(int type_id):
+    """Validate and convert a loose object type ID"""
     if type_id in (GIT_OBJ_COMMIT, GIT_OBJ_TREE, GIT_OBJ_BLOB, GIT_OBJ_TAG):
         return <git_otype>type_id
     else:
@@ -308,6 +331,9 @@ cdef int read_status_cb(char *path, unsigned int status_flags,
     return git2.GIT_SUCCESS;
 
 cdef py_str_to_git_oid(py_str, git_oid *oid):
+    """Convert a Python string with the a SHA to a git_oid
+    """
+
     cdef int err
 
     if not isinstance(py_str, basestring):
@@ -323,16 +349,47 @@ cdef py_str_to_git_oid(py_str, git_oid *oid):
             raise Error_set_py_obj(err, py_str)
 
 cdef git_oid_to_py_str(git_oid *oid):
+    """Convert a git_oid to a Python bytestring with the hex SHA
+    """
+
     cdef char hex[git2.GIT_OID_HEXSZ]
 
     git_oid_fmt(hex, oid)
     return hex
 
+class Signature(tuple):
+    """A signature with a person's name, e-mail and signing time.
+
+    Used to identify commit authors/committers, tag taggers, etc.
+    """
+
+    @property
+    def name(self):
+        """Name of the person"""
+        return self[0]
+
+    @property
+    def email(self):
+        """E-mail of the person"""
+        return self[1]
+
+    @property
+    def time(self):
+        """Time of the signature"""
+        return self[2]
+
+    @property
+    def time_offset(self):
+        """Time offset of the signature"""
+        return self[3]
+
 cdef build_person(git_signature *signature):
-    return (signature.name, signature.email,
-            signature.when.time, signature.when.offset)
+    """Build a signature 4-tuple from a git_signature*"""
+    return Signature([signature.name, signature.email,
+            signature.when.time, signature.when.offset])
 
 cdef signature_converter(value, git_signature **signature):
+    """Convert a signature 4-tuple to a git_signature*"""
     cdef int err
 
     name, email, time, offset = value
@@ -342,34 +399,47 @@ cdef signature_converter(value, git_signature **signature):
         Error_set(err);
 
 cdef class TreeEntry(object):
+    """A Tree Entry"""
+
     cdef git_tree_entry *entry
     cdef tree
 
     property sha:
+        """Hex SHA of this entry's object"""
+
         def __get__(self):
             return git_oid_to_py_str(git_tree_entry_id(self.entry))
 
     property name:
+        """Filename of this entry"""
+
         def __get__(self):
             return git_tree_entry_name(self.entry)
 
     property attributes:
+        """UNIX file attributes of this entry"""
+
         def __get__(self):
             return git_tree_entry_attributes(self.entry)
 
     def to_object(self):
+        """Look up the corresponding object in the Repository."""
+
         cdef git_oid *entry_oid
 
         entry_oid = git_tree_entry_id(self.entry);
         return (<Tree?>self.tree).repo.lookup_object(entry_oid, GIT_OBJ_ANY)
 
 cdef _tree_entry_wrap(git_tree_entry *entry, tree):
+    """Internal factory function"""
     py_entry = TreeEntry()
     py_entry.entry = entry
     py_entry.tree = tree
     return py_entry
 
 cdef class _GitObject(object):
+    """Git object (commit, blob, tree, etc.)"""
+
     cdef git_object* obj
     cdef Repository repo
 
@@ -377,6 +447,8 @@ cdef class _GitObject(object):
         git_object_close(self.obj)
 
     property sha:
+        """Hex SHA of this object"""
+
         def __get__(self):
             cdef git_oid *oid
 
@@ -387,10 +459,14 @@ cdef class _GitObject(object):
             return git_oid_to_py_str(oid)
 
     property type:
+        """Type number of this object"""
+
         def __get__(self):
             return git_object_type(self.obj)
 
     def read_raw(self):
+        """Read the raw contents of this object from the repo."""
+
         cdef git_odb_object *obj
 
         id = git_object_id(self.obj)
@@ -407,18 +483,26 @@ cdef class _GitObject(object):
             git_odb_object_close(obj)
 
 cdef class Commit(_GitObject):
+    """Commit object"""
+
     cdef git_commit* _commit(self):
         return <git_commit*>self.obj
 
     property message_short:
+        """The short (one line) message of this commit."""
+
         def __get__(self):
             return git_commit_message_short(self._commit())
 
     property message:
+        """The full message of this commit."""
+
         def __get__(self):
             return git_commit_message(self._commit())
 
     property parents:
+        """The parent commits of this commit."""
+
         def __get__(self):
             cdef unsigned int i
             cdef git_oid *parent_oid
@@ -433,18 +517,26 @@ cdef class Commit(_GitObject):
             return lst
 
     property commit_time:
+        """The commit time (i.e. committer time) of this commit."""
+
         def __get__(self):
             return git_commit_time(self._commit())
 
     property committer:
+        """The comitter's signature"""
+
         def __get__(self):
             return build_person(git_commit_committer(self._commit()))
 
     property author:
+        """The author's signature"""
+
         def __get__(self):
             return build_person(git_commit_author(self._commit()))
 
     property tree:
+        """The tree pointed to by this commit."""
+
         def __get__(self):
             cdef int err
             cdef git_tree *tree
@@ -463,6 +555,8 @@ cdef class Commit(_GitObject):
             return py_tree
 
 cdef class Tree(_GitObject):
+    """Tree object"""
+
     cdef git_tree* _tree(self):
         return <git_tree*>self.obj
 
@@ -518,6 +612,8 @@ cdef class Tree(_GitObject):
         return git_tree_entry_byname(self._tree(), name) is not NULL
 
 cdef class TreeIter(object):
+    """Tree iterator"""
+
     cdef Tree owner
     cdef int i
 
@@ -536,17 +632,25 @@ cdef class TreeIter(object):
         return _tree_entry_wrap(tree_entry, self.owner)
 
 cdef class Blob(_GitObject):
+    """Blob object"""
+
     property data:
+        """This blob's raw data, as a byte string"""
+
         def __get__(self):
             return self.read_raw()
 
 cdef class Tag(_GitObject):
+    """Tag object"""
+
     cdef _target
 
     cdef git_tag* _tag(self):
         return <git_tag*>self.obj
 
     property target:
+        """The tagged object"""
+
         def __get__(self):
             cdef git_oid *target_oid
             cdef git_otype target_type
@@ -561,6 +665,8 @@ cdef class Tag(_GitObject):
             return self._target
 
     property name:
+        """This tag's name """
+
         def __get__(self):
             cdef char *name = git_tag_name(self._tag())
             if name is NULL:
@@ -568,6 +674,8 @@ cdef class Tag(_GitObject):
             return name
 
     property tagger:
+        """The tagger's signature (name, e-mail, tagging time)"""
+
         def __get__(self):
             cdef git_signature *signature = git_tag_tagger(self._tag())
             if signature is NULL:
@@ -575,6 +683,8 @@ cdef class Tag(_GitObject):
             return build_person(signature)
 
     property message:
+        """Message of this tag"""
+
         def __get__(self):
             cdef char *message = git_tag_message(self._tag())
             if message is NULL:
@@ -582,9 +692,17 @@ cdef class Tag(_GitObject):
             return message
 
 cdef class Reference(object):
+    """Reference
+    """
+
     cdef git_reference *reference
 
     property target:
+        """Full name to the reference pointed by this reference
+
+        Only available if the reference is symbolic
+        """
+
         def __get__(self):
             cdef char *name
 
@@ -600,14 +718,23 @@ cdef class Reference(object):
                 Error_set(err)
 
     property name:
+        """The full name of this reference."""
         def __get__(self):
             return git_reference_name(self.reference)
 
     property type:
+        """Reference type (GIT_REF_OID, GIT_REF_SYMBOLIC or GIT_REF_PACKED).
+        """
+
         def __get__(self):
             return git_reference_type(self.reference)
 
     property sha:
+        """Hex SHA that the reference is pointing to.
+
+        The SHA is only available for direct (i.e. not symbolic) references.
+        """
+
         def __get__(self):
             cdef git_oid *oid
 
@@ -632,6 +759,15 @@ cdef class Reference(object):
                 Error_set(err)
 
     def rename(self, char *name):
+        """Rename the reference.
+
+        This method works for both direct and symbolic references.
+        The new name will be checked for validity and may be modified into
+        a normalized form.
+
+        The refernece will be immediately renamed in-memory and on disk.
+        """
+
         cdef int err
 
         err = git_reference_rename(self.reference, name, 0)
@@ -639,6 +775,13 @@ cdef class Reference(object):
             Error_set(err)
 
     def resolve(self):
+        """Resolve a symbolic reference and return a direct reference.
+
+        This method iteratively peels a symbolic reference until it resolves
+        to a direct reference to an actual object.
+
+        If used on a direct reference, this reference is returned immediately.
+        """
         cdef git_reference *c_reference
         cdef int err
 
@@ -649,6 +792,11 @@ cdef class Reference(object):
         return wrap_reference(c_reference)
 
     def delete(self):
+        """Delete this reference. It will no longer be valid!
+
+        This reference will be immediately removed on disk and from memory.
+        """
+
         cdef int err
 
         err = git_reference_delete(self.reference)
@@ -658,11 +806,14 @@ cdef class Reference(object):
         self.reference = NULL
 
 cdef wrap_reference(git_reference *c_reference):
+    """Internal factory function"""
+
     reference = Reference()
     reference.reference = c_reference
     return reference
 
 cdef class IndexEntry(object):
+    """Index entry"""
     cdef git_index_entry *entry
     cdef index
 
@@ -670,19 +821,30 @@ cdef class IndexEntry(object):
         self.index = index
 
     property mode:
+        """mode of this entry"""
         def __get__(self):
             return self.entry.mode
 
     property sha:
         def __get__(self):
+            """SHA for this entry"""
             return git_oid_to_py_str(&self.entry.oid)
 
 cdef wrap_index_entry(git_index_entry *entry, index):
+    """Internal factory function"""
+
     py_entry = IndexEntry(index)
     py_entry.entry = entry;
     return py_entry
 
 cdef class Index(object):
+    """Index file
+
+    Each Index object is independent and suffers no race conditions:
+    synchronization is done at the FS level (using the `read` and `write`
+    methods).
+    """
+
     cdef git_index *index
     cdef Repository repo
     cdef int own_obj
@@ -691,50 +853,8 @@ cdef class Index(object):
         self.repo = repo
         self.own_obj = 0
 
-    def add(self, char *path, int stage=0):
-        cdef int err
-
-        err = git_index_add(self.index, path, stage)
-        if err < 0:
-            Error_set_str(err, path)
-
     def __len__(self):
         return git_index_entrycount(self.index)
-
-    def write(self):
-        cdef int err
-
-        err = git_index_write(self.index)
-        if err < git2.GIT_SUCCESS:
-            Error_set(err)
-
-    def read(self):
-        cdef int err
-
-        err = git_index_read(self.index)
-        if err < git2.GIT_SUCCESS:
-            Error_set(err)
-
-    def clear(self):
-        git_index_clear(self.index)
-
-    cdef int get_position(self, value) except? -5:
-        # This is an internal function, used by __getitem__ and __setitem__
-        cdef int idx
-
-        if isinstance(value, basestring):
-            idx = git_index_find(self.index, value)
-            if idx < 0:
-                Error_set_str(idx, value)
-        elif isinstance(value, int):
-            idx = value
-            if idx < 0:
-                raise ValueError(value)
-        else:
-            raise TypeError("Index entry key must be int or str, not %.200s" %
-                     type(value).__name__)
-
-        return idx
 
     def __getitem__(self, value):
         cdef int idx
@@ -747,7 +867,8 @@ cdef class Index(object):
         return wrap_index_entry(index_entry, self)
 
     def __setitem__(self, key, value):
-        raise NotImplementedError("set item on index not yet implemented")
+        raise NotImplementedError("set item on index not yet implemented; "
+            "use add() instead.")
 
     def __delitem__(self, key):
         cdef int err
@@ -770,7 +891,82 @@ cdef class Index(object):
     def __iter__(self):
         return IndexIter(self)
 
+    cdef int get_position(self, value) except? -5:
+        """An internal method used by __getitem__ and __setitem__"""
+
+        cdef int idx
+
+        if isinstance(value, basestring):
+            idx = git_index_find(self.index, value)
+            if idx < 0:
+                Error_set_str(idx, value)
+        elif isinstance(value, int):
+            idx = value
+            if idx < 0:
+                raise ValueError(value)
+        else:
+            raise TypeError("Index entry key must be int or str, not %.200s" %
+                     type(value).__name__)
+
+        return idx
+
+    def add(self, char *path, int stage=0):
+        """Add or update an index entry from a file on disk.
+
+        This method will fail on bare index instances.
+
+        `path`:  Filename to add. The file must be relative to the Repository's
+            working folder and must be readable.
+        `stage`: Stage for the entry
+        """
+
+        cdef int err
+
+        err = git_index_add(self.index, path, stage)
+        if err < 0:
+            Error_set_str(err, path)
+
+    def read(self):
+        """Update the contents of this Index in memory by reading from disk.
+        """
+
+        cdef int err
+
+        err = git_index_read(self.index)
+        if err < git2.GIT_SUCCESS:
+            Error_set(err)
+
+    def write(self):
+        """Write this Index from memory back to disk using an atomic file lock.
+        """
+        cdef int err
+
+        err = git_index_write(self.index)
+        if err < git2.GIT_SUCCESS:
+            Error_set(err)
+
+    def clear(self):
+        """Clear the contents (all the entries) of this Index.
+
+        This clears the index object in memory; changes must be manually
+        written to disk for them to take effect.
+        """
+
+        git_index_clear(self.index)
+
     def create_tree(self):
+        """"Create a tree from the index file, return its SHA."
+
+        This method will scan the index and write a representation of its
+        current state back to disk; it recursively creates tree objects for
+        each of the subtrees stored in the index, but only returns the SHA for
+        the root tree. This is the SHA that can be used e.g. to create
+        a commit.
+
+        The Index cannot be bare, it needs to be associated to an existing
+        repository.
+        """
+
         cdef git_oid oid
         cdef int err
 
@@ -781,6 +977,9 @@ cdef class Index(object):
         return git_oid_to_py_str(&oid)
 
 cdef class IndexIter(object):
+    """Index iterator
+    """
+
     cdef Index owner
     cdef int i
 
@@ -802,6 +1001,9 @@ cdef class IndexIter(object):
         return wrap_index_entry(index_entry, self.owner)
 
 cdef class Walker(object):
+    """Revision walker
+    """
+
     cdef git_revwalk *walk
     cdef Repository repo
 
@@ -833,17 +1035,25 @@ cdef class Walker(object):
     def __iter__(self):
         return self
 
-    def hide(self, hex):
+    def hide(self, sha):
+        """Mark a commit (and its ancestors) uninteresting for the output.
+
+        `sha`:  SHA of the commit that's to be hidden.
+        """
+
         cdef int err
         cdef git_oid oid
 
-        py_str_to_git_oid(hex, &oid)
+        py_str_to_git_oid(sha, &oid)
 
         err = git_revwalk_hide(self.walk, &oid)
         if err < 0:
             return Error_set(err)
 
 cdef class Repository(object):
+    """Git repository
+    """
+
     cdef git_repository* repo
     cdef _index
 
@@ -854,10 +1064,33 @@ cdef class Repository(object):
             raise Error_set_str(err, path)
 
     def __del__(self):
+        """Free the repo when we're done with it"""
+
         if self.repo:
             git_repository_free(self.repo)
 
+    def __getitem__(self, value):
+        """Get an object from the Repository by its SHA.
+        """
+
+        cdef git_oid oid
+
+        py_str_to_git_oid(value, &oid)
+
+        return self.lookup_object(&oid, GIT_OBJ_ANY)
+
+    def __contains__(self, value):
+        """Check if the object with the given SHA exists in the Repository.
+        """
+
+        cdef git_oid oid
+
+        py_str_to_git_oid(value, &oid)
+        return git_odb_exists(git_repository_database(self.repo), &oid)
+
     cdef lookup_object(self, git_oid *oid, git_otype type):
+        """Internal method used in __getitem__, etc."""
+
         cdef int err
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
         cdef git_object *obj
@@ -891,17 +1124,38 @@ cdef class Repository(object):
         return py_obj
 
     def status(self):
+        """"Get the status of the repository as a dict.
+
+        Returns a dictionary with file paths as keys and status flags as
+        values.
+
+        See pygit2.GIT_STATUS_* for the status flags.
+        """
+
         payload_dict = {}
         git_status_foreach(self.repo, read_status_cb, <void*>payload_dict)
         return payload_dict
 
-    cpdef create_tag(self, char* tag_name, oid, git_otype target_type, tagger, char *message):
+    cpdef create_tag(self, char* tag_name, sha, git_otype target_type, tagger,
+            char *message):
+        """Create a new tag object, return its SHA.
+
+        `tag_name`:  Name for the tag; this name is validated for consistency.
+                It should also not conflict with an already existing tag name.
+        `sha`:  SHA of the object to which this tag points. This object must
+                belong to this Repository.
+        `target_type`:  Type of the target object
+        `tagger`:  Signature of the tagger for this tag, and of the tagging
+                time
+        `message`:  Full message for this tag
+        """
+
         cdef git_oid c_oid
         cdef git_signature *c_tagger
         cdef git_object *target
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
 
-        py_str_to_git_oid(oid, &c_oid)
+        py_str_to_git_oid(sha, &c_oid)
         signature_converter(tagger, &c_tagger)
 
         err = git_object_lookup(&target, self.repo, &c_oid, target_type)
@@ -918,6 +1172,17 @@ cdef class Repository(object):
         return git_oid_to_py_str(&c_oid)
 
     def walk(self, value, unsigned int sort):
+        """Generator that traverses the history starting from the given commit.
+
+        `value`:  SHA of the commit to start from.
+            The given commit will be used as one of the roots when starting
+            the revision walk.
+            If None, at least one commit must be pushed to the walker later,
+            before a walk can be started.
+        `sort`:  Combination of GIT_SORT_XXX flags that specify the sorting
+            mode when iterating through the repository's contents.
+        """
+
         cdef git_revwalk *walk
         cdef Walker walker
         cdef git_oid oid
@@ -948,33 +1213,24 @@ cdef class Repository(object):
             git_revwalk_free(walk)
             raise
 
-    def __getitem__(self, value):
-        cdef git_oid oid
-
-        py_str_to_git_oid(value, &oid)
-
-        return self.lookup_object(&oid, GIT_OBJ_ANY)
-
-
-    def __contains__(self, value):
-        cdef git_oid oid
-
-        py_str_to_git_oid(value, &oid)
-        return git_odb_exists(git_repository_database(self.repo), &oid)
-
     cdef int read_raw(self, git_odb_object **obj, git_oid *oid):
+        """Internal method to read an object's data into a git_odb_object*"""
+
         return git_odb_read(obj, git_repository_database(self.repo), oid)
 
-    def read(self, hex):
+    def read(self, sha):
+        """Read raw object data from the repository, given an object's SHA.
+        """
+
         cdef git_oid oid
         cdef int err
         cdef git_odb_object *obj
 
-        py_str_to_git_oid(hex, &oid)
+        py_str_to_git_oid(sha, &oid)
 
         err = self.read_raw(&obj, &oid)
         if err < 0:
-            return Error_set_py_obj(err, hex);
+            return Error_set_py_obj(err, sha);
 
         length = git_odb_object_size(obj)
         retval = (git_odb_object_type(obj),
@@ -984,6 +1240,13 @@ cdef class Repository(object):
         return retval
 
     def write(self, int type_id, buffer):
+        """"Write raw object data into the repository.
+
+        `type_id`:  The object type
+        `buffer`: A buffer (str) with data.
+
+        Return the hexadecimal SHA of the created object.
+        """
         cdef git_otype type
         cdef git_odb* odb
         cdef int err
@@ -1008,6 +1271,11 @@ cdef class Repository(object):
         return git_oid_to_py_str(&oid)
 
     property workdir:
+        """The normalized path to the working directory of the repository.
+
+        If the repository is bare, None will be returned.
+        """
+
         def __get__(self):
             cdef char *c_path
 
@@ -1018,6 +1286,9 @@ cdef class Repository(object):
             return c_path
 
     property path:
+        """The normalized path to the git repository.
+        """
+
         def __get__(self):
             cdef char *c_path
 
@@ -1027,64 +1298,10 @@ cdef class Repository(object):
 
             return c_path
 
-    def lookup_reference(self, char *name):
-        cdef git_reference *c_reference
-        cdef int err
-
-        err = git_reference_lookup(&c_reference, self.repo, name);
-        if err < 0:
-            return Error_set(err)
-
-        return wrap_reference(c_reference);
-
-    def create_reference(self, char *name, hex):
-        cdef git_reference *c_reference
-        cdef git_oid oid
-        cdef int err
-
-        py_str_to_git_oid(hex, &oid)
-
-        err = git_reference_create_oid(&c_reference, self.repo, name, &oid, 0)
-        if err < 0:
-            Error_set(err)
-
-        return wrap_reference(c_reference);
-
-    def create_symbolic_reference(self, char *name, char *target):
-        cdef git_reference *reference
-        cdef int err
-
-        err = git_reference_create_symbolic(&reference, self.repo, name,
-                                            target, 0);
-        if err < 0:
-            Error_set(err)
-
-        return wrap_reference(reference)
-
-    def packall_references(self):
-        cdef int err
-
-        err = git_reference_packall(self.repo)
-        if err < 0:
-            Error_set(err)
-
-    def listall_references(self, unsigned list_flags=git2.GIT_REF_LISTALL):
-        cdef git_strarray c_result
-        cdef int index
-
-        err = git_reference_listall(&c_result, self.repo, list_flags);
-        if err < 0:
-            Error_set(err)
-
-        try:
-            result = []
-            for index in range(c_result.count):
-                result.append(c_result.strings[index])
-            return tuple(result)
-        finally:
-            git_strarray_free(&c_result)
-
     property index:
+        """Index file.
+        """
+
         def __get__(self):
             cdef int err
             cdef git_index *index
@@ -1104,29 +1321,143 @@ cdef class Repository(object):
 
             return self._index or None
 
+    def lookup_reference(self, char *name):
+        """Lookup a reference by its name in this repository.
+        """
+
+        cdef git_reference *c_reference
+        cdef int err
+
+        err = git_reference_lookup(&c_reference, self.repo, name);
+        if err < 0:
+            return Error_set(err)
+
+        return wrap_reference(c_reference);
+
+    def create_reference(self, char *name, sha):
+        """Create a new direct (object id) reference
+
+        The reference will be created in the repository and written to the
+        disk.
+
+        `name`:  Name of the newly created reference
+        `sha`:  SHA of the object to point the new reference to
+        """
+        cdef git_reference *c_reference
+        cdef git_oid oid
+        cdef int err
+
+        py_str_to_git_oid(sha, &oid)
+
+        err = git_reference_create_oid(&c_reference, self.repo, name, &oid, 0)
+        if err < 0:
+            Error_set(err)
+
+        return wrap_reference(c_reference);
+
+    def create_symbolic_reference(self, char *name, char *target):
+        """Create a new symbolic reference.
+
+        The reference will be created in the repository and written to the
+        disk.
+
+        `name`:  Name of the newly created reference
+        `target`:  Name of an existing reference that the new one will point to
+        """
+
+        cdef git_reference *reference
+        cdef int err
+
+        err = git_reference_create_symbolic(&reference, self.repo, name,
+                                            target, 0);
+        if err < 0:
+            Error_set(err)
+
+        return wrap_reference(reference)
+
+    def packall_references(self):
+        """Pack all the loose references in the repository.
+
+        This method will load into the cache all the loose references on the
+        repository and update the `packed-refs` file with them.
+
+        Once the `packed-refs` file has been written properly, the loose
+        references will be removed from disk.
+
+        WARNING: calling this method may invalidate any existing references
+        previously loaded on the cache.
+        """
+        cdef int err
+
+        err = git_reference_packall(self.repo)
+        if err < 0:
+            Error_set(err)
+
+    def listall_references(self, unsigned list_flags=GIT_REF_LISTALL):
+        """Return a list with all the references in the repository.
+
+        The listed references may be filtered by type, or using a bitwise OR
+        of several types. Use the default value, `GIT_REF_LISTALL`, to obtain
+        all references, including packed ones.
+        """
+
+        cdef git_strarray c_result
+        cdef int index
+
+        err = git_reference_listall(&c_result, self.repo, list_flags);
+        if err < 0:
+            Error_set(err)
+
+        try:
+            result = []
+            for index in range(c_result.count):
+                result.append(c_result.strings[index])
+            return tuple(result)
+        finally:
+            git_strarray_free(&c_result)
+
     def create_commit(self, update_ref, author, committer, char *message,
-                hex, parent_list):
+                tree, parent_list):
+        """Create a new commit object, return its SHA.
+
+        `update_ref`:  If not None, name of the reference that will be updated
+            to point to this commit. If the reference is not direct, it will
+            be resolved to a direct reference. Use "HEAD" to update the HEAD
+            of the current branch and make it point to this commit
+        `author`:  Signature representing the author and the authory time of
+            this commit
+        `committer`:  Signature representing the committer and the commit
+            time of this commit
+        `message`:  Full message for this commit
+        `tree`:  SHA of a tree object that will be used as the tree for the
+            commit. This tree object must be found in this Repository.
+        `parent_list`:  List of SHAs of commits objects that will be used as
+            the parents for this commit. All the given commits must be found in
+            this Repository.
+        """
+
         cdef char *c_update_ref = NULL
         cdef git_signature *c_author, *c_committer
         cdef git_oid oid
         cdef int err, i
         cdef git_commit **parents
-        cdef git_tree *tree
+        cdef git_tree *c_tree
 
         if update_ref is not None:
             c_update_ref = update_ref
 
         signature_converter(author, &c_author)
         signature_converter(committer, &c_committer)
-        py_str_to_git_oid(hex, &oid)
+        py_str_to_git_oid(tree, &oid)
 
-        err = git_tree_lookup(&tree, self.repo, &oid);
+        err = git_tree_lookup(&c_tree, self.repo, &oid);
         if err < 0:
             Error_set(err)
 
         try:
 
-            parents = <git_commit**>malloc(len(parent_list) * sizeof(git_commit*))
+            mem_size = len(parent_list) * sizeof(git_commit*)
+            parents = <git_commit**>malloc(mem_size)
 
             if parents is NULL:
                 raise MemoryError
@@ -1138,8 +1469,9 @@ cdef class Repository(object):
                     if git_commit_lookup(&parents[i], self.repo, &oid):
                         raise RuntimeError
 
-                err = git_commit_create(&oid, self.repo, c_update_ref, c_author,
-                        c_committer, message, tree, len(parent_list), parents)
+                err = git_commit_create(&oid, self.repo, c_update_ref,
+                        c_author, c_committer, message, c_tree,
+                        len(parent_list), parents)
                 if err < 0:
                     Error_set(err)
 
@@ -1151,4 +1483,4 @@ cdef class Repository(object):
                 free(parents)
 
         finally:
-            git_tree_close(tree)
+            git_tree_close(c_tree)
