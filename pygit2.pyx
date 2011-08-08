@@ -278,20 +278,26 @@ cdef Error_type(int err):
             git2.GIT_EREVWALKOVER: StopIteration,
         }.get(err, GitError)
 
-cdef Error_set_str(int err, message):
-    """Raise exception based on the Git error code and a string message
+cdef err_str(message, int err):
+    """Handle the given Git error code and a string message
+
+    Does nothing if no error occured.
     """
-    if err == git2.GIT_ENOTFOUND:
+    if err >= 0:
+        return
+    elif err == git2.GIT_ENOTFOUND:
         raise KeyError, message
     else:
         raise Error_type(err), "%s: %s" % (message, git_lasterror())
 
-cdef Error_set_py_obj(int err, py_obj):
-    """Raise exception based on Git error code and associated Python object
-    """
-    assert err < 0
+cdef err_obj(py_obj, int err):
+    """Handle the given Git error code and associated Python object
 
-    if err == git2.GIT_ENOTOID and not isinstance(py_obj, basestring):
+    Does nothing if no error occured.
+    """
+    if err >= 0:
+        return
+    elif err == git2.GIT_ENOTOID and not isinstance(py_obj, basestring):
         raise TypeError("Git object id must be 40 byte hexadecimal str, or 20 byte binary str: %.200s" % type(py_obj).__name__)
     elif err == git2.GIT_ENOTFOUND:
         # KeyError expects the arg to be the missing key.
@@ -303,13 +309,18 @@ cdef Error_set_py_obj(int err, py_obj):
         message = "<error in __str__>"
     raise Error_type(err)("%s: %s" % (message, git_lasterror()))
 
-cdef Error_set(int err):
-    """Raise an exception based on the Git error code"""
-    assert err < 0
-    if err == git2.GIT_ENOTFOUND:
+cdef err(int err):
+    """Handle the given Git error code
+
+    Does nothing if no error occured.
+    """
+
+    if err >= 0:
+        return
+    elif err == git2.GIT_ENOTFOUND:
         # KeyError expects the arg to be the missing key. If the caller
-        # called this instead of Error_set_py_obj, it means we don't
-        # know the key, but nor should we use git_lasterror.
+        # called this instead of err_obj, it means we don't know the key, but
+        # we shouldn't use git_lasterror anyway.
         raise KeyError(None)
     elif err == git2.GIT_EOSERR:
         PyErr_SetFromErrno(GitError)
@@ -338,16 +349,14 @@ cdef py_str_to_git_oid(py_str, git_oid *oid):
     cdef int err
 
     if not isinstance(py_str, basestring):
-        Error_set_py_obj(git2.GIT_ENOTOID, py_str)
+        err_obj(py_str, git2.GIT_ENOTOID)
 
     hex_or_bin = py_str
 
     if len(py_str) == 20:
         git_oid_fromraw(oid, py_str)
     else:
-        err = git_oid_fromstr(oid, py_str)
-        if err < 0:
-            raise Error_set_py_obj(err, py_str)
+        err_obj(py_str, git_oid_fromstr(oid, py_str))
 
 cdef git_oid_to_py_str(git_oid *oid):
     """Convert a git_oid to a Python bytestring with the hex SHA
@@ -391,13 +400,10 @@ cdef build_person(git_signature *signature):
 
 cdef signature_converter(value, git_signature **signature):
     """Convert a signature 4-tuple to a git_signature*"""
-    cdef int err
 
     name, email, time, offset = value
 
-    err = git_signature_new(signature, name, email, time, offset);
-    if err < 0:
-        Error_set(err);
+    err(git_signature_new(signature, name, email, time, offset))
 
 cdef _new(cls):
     return cls.__new__(cls)
@@ -485,9 +491,7 @@ cdef class GitObject(object):
         if not id:
             return None  # in-memory object
 
-        err = self.repo.read_raw(&obj, id)
-        if err < 0:
-            Error_set_py_obj(err, self.sha)
+        err_obj(self.sha, self.repo.read_raw(&obj, id))
 
         try:
             return (<char*>git_odb_object_data(obj))[:git_odb_object_size(obj)]
@@ -523,7 +527,7 @@ cdef class Commit(GitObject):
             for i in range(git_commit_parentcount(self._commit())):
                 parent_oid = git_commit_parent_oid(self._commit(), i)
                 if parent_oid is NULL:
-                    Error_set(git2.GIT_ENOTFOUND)
+                    err(git2.GIT_ENOTFOUND)
                 obj = self.repo.lookup_object(parent_oid, git2.GIT_OBJ_COMMIT)
                 lst.append(obj)
             return lst
@@ -550,16 +554,15 @@ cdef class Commit(GitObject):
         """The tree pointed to by this commit."""
 
         def __get__(self):
-            cdef int err
+            cdef int error
             cdef git_tree *tree
             cdef Tree py_tree
 
-            err = git_commit_tree(&tree, self._commit())
-            if err == git2.GIT_ENOTFOUND:
+            error = git_commit_tree(&tree, self._commit())
+            if error == git2.GIT_ENOTFOUND:
                 return None
-
-            if err < 0:
-                Error_set(err)
+            else:
+                err(error)
 
             py_tree = _new(Tree)
             py_tree.obj = <git_object*>tree
@@ -732,9 +735,7 @@ cdef class Reference(object):
             return name
 
         def __set__(self, char *name):
-            err = git_reference_set_target(self.reference, name)
-            if err < 0:
-                Error_set(err)
+            err(git_reference_set_target(self.reference, name))
 
     property name:
         """The full name of this reference."""
@@ -767,15 +768,10 @@ cdef class Reference(object):
 
         def __set__(self, sha):
             cdef git_oid oid
-            cdef int err
 
-            # 1- Get the oid from the sha
             py_str_to_git_oid(sha, &oid)
 
-            # 2- Set the oid
-            err = git_reference_set_oid(self.reference, &oid)
-            if err < 0:
-                Error_set(err)
+            err(git_reference_set_oid(self.reference, &oid))
 
     def rename(self, char *name):
         """Rename the reference.
@@ -787,11 +783,7 @@ cdef class Reference(object):
         The refernece will be immediately renamed in-memory and on disk.
         """
 
-        cdef int err
-
-        err = git_reference_rename(self.reference, name, 0)
-        if err < 0:
-            Error_set(err)
+        err(git_reference_rename(self.reference, name, 0))
 
     def resolve(self):
         """Resolve a symbolic reference and return a direct reference.
@@ -802,11 +794,8 @@ cdef class Reference(object):
         If used on a direct reference, this reference is returned immediately.
         """
         cdef git_reference *c_reference
-        cdef int err
 
-        err = git_reference_resolve(&c_reference, self.reference)
-        if err < 0:
-            Error_set(err)
+        err(git_reference_resolve(&c_reference, self.reference))
 
         return wrap_reference(c_reference)
 
@@ -816,11 +805,7 @@ cdef class Reference(object):
         This reference will be immediately removed on disk and from memory.
         """
 
-        cdef int err
-
-        err = git_reference_delete(self.reference)
-        if err < 0:
-            Error_set(err)
+        err(git_reference_delete(self.reference))
 
         self.reference = NULL
 
@@ -900,11 +885,7 @@ cdef class Index(object):
             "use add() instead.")
 
     def __delitem__(self, key):
-        cdef int err
-
-        err = git_index_remove(self.index, self.get_position(key))
-        if err < 0:
-            Error_set(err);
+        err(git_index_remove(self.index, self.get_position(key)))
 
     def __contains__(self, char *path):
         cdef int idx
@@ -913,7 +894,7 @@ cdef class Index(object):
         if idx == git2.GIT_ENOTFOUND:
             return False
         elif idx < 0:
-            Error_set_str(idx, path)
+            err_str(path, idx)
         else:
             return True
 
@@ -928,7 +909,7 @@ cdef class Index(object):
         if isinstance(value, basestring):
             idx = git_index_find(self.index, value)
             if idx < 0:
-                Error_set_str(idx, value)
+                err_str(value, idx)
         elif isinstance(value, int):
             idx = value
             if idx < 0:
@@ -949,30 +930,19 @@ cdef class Index(object):
         `stage`: Stage for the entry
         """
 
-        cdef int err
-
-        err = git_index_add(self.index, path, stage)
-        if err < 0:
-            Error_set_str(err, path)
+        err_str(path, git_index_add(self.index, path, stage))
 
     def read(self):
         """Update the contents of this Index in memory by reading from disk.
         """
 
-        cdef int err
-
-        err = git_index_read(self.index)
-        if err < git2.GIT_SUCCESS:
-            Error_set(err)
+        err(git_index_read(self.index))
 
     def write(self):
         """Write this Index from memory back to disk using an atomic file lock.
         """
-        cdef int err
 
-        err = git_index_write(self.index)
-        if err < git2.GIT_SUCCESS:
-            Error_set(err)
+        err(git_index_write(self.index))
 
     def clear(self):
         """Clear the contents (all the entries) of this Index.
@@ -997,11 +967,8 @@ cdef class Index(object):
         """
 
         cdef git_oid oid
-        cdef int err
 
-        err = git_tree_create_fromindex(&oid, self.index)
-        if err < 0:
-            Error_set(err)
+        err(git_tree_create_fromindex(&oid, self.index))
 
         return git_oid_to_py_str(&oid)
 
@@ -1050,17 +1017,12 @@ cdef class Walker(object):
 
     def __next__(self):
         cdef git_oid oid
-        cdef int err
         cdef git_commit *commit
         cdef Commit py_commit
 
-        err = git_revwalk_next(&oid, self.walk)
-        if err < 0:
-            raise Error_set(err)
+        err(git_revwalk_next(&oid, self.walk))
 
-        err = git_commit_lookup(&commit, self.repo.repo, &oid);
-        if err < 0:
-            return Error_set(err);
+        err(git_commit_lookup(&commit, self.repo.repo, &oid))
 
         py_commit = _new(Commit)
         py_commit.obj = <git_object*>commit
@@ -1076,14 +1038,11 @@ cdef class Walker(object):
         `sha`:  SHA of the commit that's to be hidden.
         """
 
-        cdef int err
         cdef git_oid oid
 
         py_str_to_git_oid(sha, &oid)
 
-        err = git_revwalk_hide(self.walk, &oid)
-        if err < 0:
-            return Error_set(err)
+        err(git_revwalk_hide(self.walk, &oid))
 
 cdef class Repository(object):
     """Git repository
@@ -1094,9 +1053,7 @@ cdef class Repository(object):
 
     def __cinit__(self, path):
         cdef int err
-        err = git_repository_open(&self.repo, path)
-        if err < 0:
-            raise Error_set_str(err, path)
+        err_str(path, git_repository_open(&self.repo, path))
 
     def __del__(self):
         """Free the repo when we're done with it"""
@@ -1126,17 +1083,17 @@ cdef class Repository(object):
     cdef lookup_object(self, git_oid *oid, git_otype type):
         """Internal method used in __getitem__, etc."""
 
-        cdef int err
+        cdef int error
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
         cdef git_object *obj
         cdef git_otype otype
         cdef GitObject py_obj
 
-        err = git_object_lookup(&obj, self.repo, oid, type);
-        if err < 0:
+        error = git_object_lookup(&obj, self.repo, oid, type);
+        if error < 0:
             git_oid_fmt(hex, oid);
             hex[git2.GIT_OID_HEXSZ] = '\0';
-            return Error_set_str(err, hex);
+            err_str(hex, error);
 
         if obj is NULL:
             raise MemoryError()
@@ -1193,11 +1150,11 @@ cdef class Repository(object):
         py_str_to_git_oid(sha, &c_oid)
         signature_converter(tagger, &c_tagger)
 
-        err = git_object_lookup(&target, self.repo, &c_oid, target_type)
-        if err < 0:
+        error = git_object_lookup(&target, self.repo, &c_oid, target_type)
+        if error < 0:
             git_oid_fmt(hex, &c_oid)
             hex[git2.GIT_OID_HEXSZ] = '\0'
-            Error_set_str(err, hex);
+            err_str(hex, error);
 
         err = git_tag_create(&c_oid, self.repo, tag_name, target, c_tagger, message, 0)
         git_object_close(target)
@@ -1225,9 +1182,7 @@ cdef class Repository(object):
         if value is not None and not isinstance(value, basestring):
             raise TypeError(value)
 
-        err = git_revwalk_new(&walk, self.repo);
-        if err < 0:
-            return Error_set(err);
+        err(git_revwalk_new(&walk, self.repo))
 
         try:
             # Sort
@@ -1236,9 +1191,7 @@ cdef class Repository(object):
             # Push
             if value is not None:
                 py_str_to_git_oid(value, &oid)
-                err = git_revwalk_push(walk, &oid)
-                if err < 0:
-                    Error_set(err)
+                err(git_revwalk_push(walk, &oid))
 
             walker = Walker.__new__(Walker, self)
             walker.walk = walk
@@ -1258,14 +1211,11 @@ cdef class Repository(object):
         """
 
         cdef git_oid oid
-        cdef int err
         cdef git_odb_object *obj
 
         py_str_to_git_oid(sha, &oid)
 
-        err = self.read_raw(&obj, &oid)
-        if err < 0:
-            return Error_set_py_obj(err, sha);
+        err_obj(sha, self.read_raw(&obj, &oid))
 
         length = git_odb_object_size(obj)
         retval = (git_odb_object_type(obj),
@@ -1284,24 +1234,23 @@ cdef class Repository(object):
         """
         cdef git_otype type
         cdef git_odb* odb
-        cdef int err
+        cdef int error
         cdef git_odb_stream* stream
         cdef git_oid oid
 
         type = int_to_loose_object_type(type_id)
         if type == GIT_OBJ_BAD:
-            return Error_set_str(-100, "Invalid object type")
+            raise GitError("Invalid object type")
 
         odb = git_repository_database(self.repo)
 
-        err = git_odb_open_wstream(&stream, odb, len(buffer), type);
-        if err == git2.GIT_SUCCESS:
+        error = git_odb_open_wstream(&stream, odb, len(buffer), type);
+        if error == git2.GIT_SUCCESS:
             b = str(buffer)
             stream.write(stream, b, len(buffer))
-            err = stream.finalize_write(&oid, stream)
+            error = stream.finalize_write(&oid, stream)
             stream.free(stream)
-        if err < 0:
-            return Error_set_str(err, "failed to write data")
+        err_str("failed to write data", error)
 
         return git_oid_to_py_str(&oid)
 
@@ -1338,22 +1287,22 @@ cdef class Repository(object):
         """
 
         def __get__(self):
-            cdef int err
+            cdef int error
             cdef git_index *index
             cdef Index py_index
 
             assert self.repo
 
             if self._index is None:
-                err = git_repository_index(&index, self.repo)
-                if err == git2.GIT_SUCCESS:
+                error = git_repository_index(&index, self.repo)
+                if error == git2.GIT_SUCCESS:
                     py_index = Index.__new__(Index, self)
                     py_index.index = index
                     self._index = py_index
-                elif err == git2.GIT_EBAREINDEX:
+                elif error == git2.GIT_EBAREINDEX:
                     self._index = False
                 else:
-                    Error_set(err)
+                    err(error)
 
             return self._index or None
 
@@ -1362,11 +1311,8 @@ cdef class Repository(object):
         """
 
         cdef git_reference *c_reference
-        cdef int err
 
-        err = git_reference_lookup(&c_reference, self.repo, name);
-        if err < 0:
-            return Error_set(err)
+        err(git_reference_lookup(&c_reference, self.repo, name))
 
         return wrap_reference(c_reference);
 
@@ -1381,13 +1327,10 @@ cdef class Repository(object):
         """
         cdef git_reference *c_reference
         cdef git_oid oid
-        cdef int err
 
         py_str_to_git_oid(sha, &oid)
 
-        err = git_reference_create_oid(&c_reference, self.repo, name, &oid, 0)
-        if err < 0:
-            Error_set(err)
+        err(git_reference_create_oid(&c_reference, self.repo, name, &oid, 0))
 
         return wrap_reference(c_reference);
 
@@ -1402,12 +1345,9 @@ cdef class Repository(object):
         """
 
         cdef git_reference *reference
-        cdef int err
 
-        err = git_reference_create_symbolic(&reference, self.repo, name,
-                                            target, 0);
-        if err < 0:
-            Error_set(err)
+        err(git_reference_create_symbolic(&reference, self.repo, name,
+                target, 0))
 
         return wrap_reference(reference)
 
@@ -1423,11 +1363,8 @@ cdef class Repository(object):
         WARNING: calling this method may invalidate any existing references
         previously loaded on the cache.
         """
-        cdef int err
 
-        err = git_reference_packall(self.repo)
-        if err < 0:
-            Error_set(err)
+        err(git_reference_packall(self.repo))
 
     def listall_references(self, unsigned list_flags=GIT_REF_LISTALL):
         """Return a list with all the references in the repository.
@@ -1440,9 +1377,7 @@ cdef class Repository(object):
         cdef git_strarray c_result
         cdef int index
 
-        err = git_reference_listall(&c_result, self.repo, list_flags);
-        if err < 0:
-            Error_set(err)
+        err(git_reference_listall(&c_result, self.repo, list_flags))
 
         try:
             result = []
@@ -1475,7 +1410,7 @@ cdef class Repository(object):
         cdef char *c_update_ref = NULL
         cdef git_signature *c_author, *c_committer
         cdef git_oid oid
-        cdef int err, i
+        cdef int i
         cdef git_commit **parents
         cdef git_tree *c_tree
 
@@ -1486,9 +1421,7 @@ cdef class Repository(object):
         signature_converter(committer, &c_committer)
         py_str_to_git_oid(tree, &oid)
 
-        err = git_tree_lookup(&c_tree, self.repo, &oid);
-        if err < 0:
-            Error_set(err)
+        err(git_tree_lookup(&c_tree, self.repo, &oid))
 
         try:
 
@@ -1505,11 +1438,9 @@ cdef class Repository(object):
                     if git_commit_lookup(&parents[i], self.repo, &oid):
                         raise RuntimeError
 
-                err = git_commit_create(&oid, self.repo, c_update_ref,
+                err(git_commit_create(&oid, self.repo, c_update_ref,
                         c_author, c_committer, message, c_tree,
-                        len(parent_list), parents)
-                if err < 0:
-                    Error_set(err)
+                        len(parent_list), parents))
 
                 return git_oid_to_py_str(&oid)
 
