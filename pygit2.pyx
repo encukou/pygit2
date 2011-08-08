@@ -157,6 +157,7 @@ cdef extern from "git2.h":
     char *git_repository_path(git_repository *repo, git_repository_pathid id)
     git_odb *git_repository_database(git_repository *repo)
     int git_repository_index(git_index **index, git_repository *repo)
+    void git_repository_free(git_repository *repo)
 
     # revwalk.h
     void git_revwalk_sorting(git_revwalk *walk, unsigned int sort_mode)
@@ -371,6 +372,9 @@ cdef _tree_entry_wrap(git_tree_entry *entry, tree):
 cdef class _GitObject(object):
     cdef git_object* obj
     cdef Repository repo
+
+    def __del__(self):
+        git_object_close(self.obj)
 
     property sha:
         def __get__(self):
@@ -848,6 +852,10 @@ cdef class Repository(object):
         err = git_repository_open(&self.repo, path)
         if err < 0:
             raise Error_set_str(err, path)
+
+    def __del__(self):
+        if self.repo:
+            git_repository_free(self.repo)
 
     cdef lookup_object(self, git_oid *oid, git_otype type):
         cdef int err
