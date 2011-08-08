@@ -1410,7 +1410,7 @@ cdef class Repository(object):
         cdef char *c_update_ref = NULL
         cdef git_signature *c_author, *c_committer
         cdef git_oid oid
-        cdef int i
+        cdef int i, last_parent = 0
         cdef git_commit **parents
         cdef git_tree *c_tree
 
@@ -1431,12 +1431,12 @@ cdef class Repository(object):
             if parents is NULL:
                 raise MemoryError
 
-            i = 0
             try:
                 for i, parent in enumerate(parent_list):
                     py_str_to_git_oid(parent, &oid)
                     if git_commit_lookup(&parents[i], self.repo, &oid):
                         raise RuntimeError
+                    last_parent = i
 
                 err(git_commit_create(&oid, self.repo, c_update_ref,
                         c_author, c_committer, message, c_tree,
@@ -1445,7 +1445,7 @@ cdef class Repository(object):
                 return git_oid_to_py_str(&oid)
 
             finally:
-                for j in range(i):
+                for j in range(last_parent + 1):
                     git_commit_close(parents[i]);
                 free(parents)
 
