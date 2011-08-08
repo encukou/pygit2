@@ -34,6 +34,7 @@ try:
 except ImportError:
     from distutils.core import setup, Extension, Command
     SETUPTOOLS = False
+    raise  # Currently we need Setuptools to run Cython
 
 import sys
 
@@ -79,8 +80,9 @@ setup(name='pygit2',
       Bindings for libgit2, a linkable C library for the Git version-control
       system.
       """,
+      setup_requires=['setuptools_cython'],
       ext_modules = [
-          Extension('pygit2', ['pygit2.c'],
+          Extension('pygit2', ['pygit2.pyx'],
                     include_dirs=include_dirs,
                     library_dirs=library_dirs,
                     libraries=libraries),

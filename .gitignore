@@ -1,5 +1,6 @@
 build
 dist
+pygit2.c
 pygit2.so
 test/*.pyc
 *.egg-info
