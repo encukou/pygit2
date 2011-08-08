@@ -28,6 +28,10 @@ Boston, MA 02110-1301, USA.
 cdef extern from "Python.h":
     cdef PyErr_SetFromErrno(type)
 
+cdef extern from "stdlib.h":
+    void* malloc(size_t size)
+    void free(void* ptr)
+
 cdef extern from "git2.h":
     # common.h
     ctypedef struct git_strarray:
@@ -74,6 +78,16 @@ cdef extern from "git2.h":
     char *git_commit_message_short(git_commit *commit)
     char *git_commit_message(git_commit *commit)
     int git_commit_lookup(git_commit **commit, git_repository *repo, git_oid *id)
+    unsigned int git_commit_parentcount(git_commit *commit)
+    git_oid *git_commit_parent_oid(git_commit *commit, unsigned int n)
+    int git_commit_create(git_oid *oid, git_repository *repo,
+        char *update_ref, git_signature *author, git_signature *committer,
+        char *message, git_tree *tree, int parent_count, git_commit *parents[])
+    void git_commit_close(git_commit *commit)
+    int git_commit_tree(git_tree **tree_out, git_commit *commit)
+    git_signature *git_commit_author(git_commit *commit)
+    git_signature *git_commit_committer(git_commit *commit)
+    git_time_t git_commit_time(git_commit *commit)
 
     # index.h
     ctypedef struct git_index_time:
@@ -190,6 +204,8 @@ cdef extern from "git2.h":
     git_oid *git_tree_entry_id(git_tree_entry *entry)
     char *git_tree_entry_name(git_tree_entry *entry)
     unsigned int git_tree_entry_attributes(git_tree_entry *entry)
+    int git_tree_lookup(git_tree **tree, git_repository *repo, git_oid *id)
+    void git_tree_close(git_tree *tree)
 
 cdef git_lasterror():
     cdef char * lasterror
@@ -398,6 +414,50 @@ cdef class Commit(_GitObject):
         def __get__(self):
             return git_commit_message(self._commit())
 
+    property parents:
+        def __get__(self):
+            cdef unsigned int i
+            cdef git_oid *parent_oid
+
+            lst = []
+            for i in range(git_commit_parentcount(self._commit())):
+                parent_oid = git_commit_parent_oid(self._commit(), i)
+                if parent_oid is NULL:
+                    Error_set(git2.GIT_ENOTFOUND)
+                obj = self.repo.lookup_object(parent_oid, git2.GIT_OBJ_COMMIT)
+                lst.append(obj)
+            return lst
+
+    property commit_time:
+        def __get__(self):
+            return git_commit_time(self._commit())
+
+    property committer:
+        def __get__(self):
+            return build_person(git_commit_committer(self._commit()))
+
+    property author:
+        def __get__(self):
+            return build_person(git_commit_author(self._commit()))
+
+    property tree:
+        def __get__(self):
+            cdef int err
+            cdef git_tree *tree
+
+            err = git_commit_tree(&tree, self._commit())
+            if err == git2.GIT_ENOTFOUND:
+                return None
+
+            if err < 0:
+                Error_set(err)
+
+            py_tree = Tree()
+            py_tree.obj = <git_object*>tree
+            py_tree.repo = self.repo
+
+            return py_tree
+
 cdef class Tree(_GitObject):
     cdef git_tree* _tree(self):
         return <git_tree*>self.obj
@@ -407,7 +467,6 @@ cdef class Tree(_GitObject):
         cdef long slen
 
         len = slen = git_tree_entrycount(<git_tree*>self.obj);
-        print index, -slen
         if index >= slen:
             raise IndexError(index)
         elif index < -slen:
@@ -1034,3 +1093,52 @@ cdef class Repository(object):
                     Error_set(err)
 
             return self._index or None
+
+    def create_commit(self, update_ref, author, committer, char *message,
+                hex, parent_list):
+        cdef char *c_update_ref = NULL
+        cdef git_signature *c_author, *c_committer
+        cdef git_oid oid
+        cdef int err, i
+        cdef git_commit **parents
+        cdef git_tree *tree
+
+        if update_ref is not None:
+            c_update_ref = update_ref
+
+        signature_converter(author, &c_author)
+        signature_converter(committer, &c_committer)
+        py_str_to_git_oid(hex, &oid)
+
+        err = git_tree_lookup(&tree, self.repo, &oid);
+        if err < 0:
+            Error_set(err)
+
+        try:
+
+            parents = <git_commit**>malloc(len(parent_list) * sizeof(git_commit*))
+
+            if parents is NULL:
+                raise MemoryError
+
+            i = 0
+            try:
+                for i, parent in enumerate(parent_list):
+                    py_str_to_git_oid(parent, &oid)
+                    if git_commit_lookup(&parents[i], self.repo, &oid):
+                        raise RuntimeError
+
+                err = git_commit_create(&oid, self.repo, c_update_ref, c_author,
+                        c_committer, message, tree, len(parent_list), parents)
+                if err < 0:
+                    Error_set(err)
+
+                return git_oid_to_py_str(&oid)
+
+            finally:
+                for j in range(i):
+                    git_commit_close(parents[i]);
+                free(parents)
+
+        finally:
+            git_tree_close(tree)
