@@ -25,13 +25,26 @@ the Free Software Foundation, 51 Franklin Street, Fifth Floor,
 Boston, MA 02110-1301, USA.
 """
 
-cdef extern from "git2.h":
+cdef extern from "Python.h":
+    cdef PyErr_SetFromErrno(type)
 
+cdef extern from "git2.h":
     # types.h
+    ctypedef long git_time_t
+
     cdef struct git_repository
     cdef struct git_object
     cdef struct git_tree_entry
     cdef struct git_tree
+    cdef struct git_tag
+    cdef struct git_commit
+    cdef struct git_time:
+        git_time_t time
+        int offset
+    cdef struct git_signature:
+        char *name
+        char *email
+        git_time when
     ctypedef enum git_otype:
         pass
 
@@ -42,17 +55,33 @@ cdef extern from "git2.h":
     void git_oid_fromraw(git_oid *out, unsigned char *raw)
     void git_oid_fmt(char *str, git_oid *oid)
 
+    # commit.h
+    char *git_commit_message_short(git_commit *commit)
+    char *git_commit_message(git_commit *commit)
+
     # object.h
     int git_object_lookup(git_object **object, git_repository *repo,
             git_oid *id, git_otype type)
     git_otype git_object_type(git_object *obj)
     git_oid *git_object_id(git_object *obj)
+    void git_object_close(git_object *object)
 
     # repository.h
     int git_repository_open(git_repository **repository, char *path)
 
+    # signature.h
+    int git_signature_new(git_signature **sig_out, char *name, char *email, git_time_t time, int offset)
+
     # status.h
     int git_status_foreach(git_repository *repo, int (*callback)(char *, unsigned int, void *), void *payload)
+
+    # tag.h
+    git_otype git_tag_type(git_tag *tag)
+    git_oid *git_tag_target_oid(git_tag *tag)
+    char *git_tag_name(git_tag *tag)
+    git_signature *git_tag_tagger(git_tag *tag)
+    char *git_tag_message(git_tag *tag)
+    int git_tag_create(git_oid *oid, git_repository *repo, char *tag_name, git_object *target, git_signature *tagger, char *message, int force)
 
     # tree.h
     git_tree_entry *git_tree_entry_byindex(git_tree *tree, unsigned int idx)
@@ -71,7 +100,7 @@ cdef git_lasterror():
     else:
         return lasterror
 
-# Workaround for Cython bug 471 (http://trac.cython.org/cython_trac/ticket/471)
+# Workaround for Cython bug 92 (http://trac.cython.org/cython_trac/ticket/92)
 cimport git2
 GIT_OBJ_ANY = git2.GIT_OBJ_ANY
 GIT_OBJ_BAD = git2.GIT_OBJ_BAD
@@ -135,6 +164,17 @@ cdef Error_set_py_obj(int err, py_obj):
         message = "<error in __str__>"
     raise Error_type(err)("%s: %s" % (message, git_lasterror()))
 
+cdef Error_set(int err):
+    assert err < 0
+    if err == git2.GIT_ENOTFOUND:
+        # KeyError expects the arg to be the missing key. If the caller
+        # called this instead of Error_set_py_obj, it means we don't
+        # know the key, but nor should we use git_lasterror.
+        raise KeyError(None)
+    elif err == git2.GIT_EOSERR:
+        PyErr_SetFromErrno(GitError)
+    raise Error_type(err)(git_lasterror())
+
 cdef int read_status_cb(char *path, unsigned int status_flags,
                           void *payload_dict):
     """ This is the callback that will be called in git_status_foreach. It
@@ -164,6 +204,19 @@ cdef git_oid_to_py_str(git_oid *oid):
 
     git_oid_fmt(hex, oid)
     return hex
+
+cdef build_person(git_signature *signature):
+    return (signature.name, signature.email,
+            signature.when.time, signature.when.offset)
+
+cdef signature_converter(value, git_signature **signature):
+    cdef int err
+
+    name, email, time, offset = value
+
+    err = git_signature_new(signature, name, email, time, offset);
+    if err < 0:
+        Error_set(err);
 
 cdef class TreeEntry(object):
     cdef git_tree_entry *entry
@@ -207,8 +260,21 @@ cdef class _GitObject(object):
 
             return git_oid_to_py_str(oid)
 
+    property type:
+        def __get__(self):
+            return git_object_type(self.obj)
+
 cdef class Commit(_GitObject):
-    pass
+    cdef git_commit* _commit(self):
+        return <git_commit*>self.obj
+
+    property message_short:
+        def __get__(self):
+            return git_commit_message_short(self._commit())
+
+    property message:
+        def __get__(self):
+            return git_commit_message(self._commit())
 
 cdef class Tree(_GitObject):
     cdef git_tree* _tree(self):
@@ -288,7 +354,45 @@ cdef class Blob(_GitObject):
     pass
 
 cdef class Tag(_GitObject):
-    pass
+    cdef _target
+
+    cdef git_tag* _tag(self):
+        return <git_tag*>self.obj
+
+    property target:
+        def __get__(self):
+            cdef git_oid *target_oid
+            cdef git_otype target_type
+
+            if self._target is None:
+                target_oid = git_tag_target_oid(self._tag())
+                target_type = git_tag_type(self._tag())
+                self._target = self.repo.lookup_object(target_oid, target_type)
+            if self._target is None:
+                raise RuntimeError
+
+            return self._target
+
+    property name:
+        def __get__(self):
+            cdef char *name = git_tag_name(self._tag())
+            if name is NULL:
+                return None
+            return name
+
+    property tagger:
+        def __get__(self):
+            cdef git_signature *signature = git_tag_tagger(self._tag())
+            if signature is NULL:
+                return None
+            return build_person(signature)
+
+    property message:
+        def __get__(self):
+            cdef char *message = git_tag_message(self._tag())
+            if message is NULL:
+                return None
+            return message
 
 cdef class Repository(object):
     cdef git_repository* repo
@@ -336,6 +440,28 @@ cdef class Repository(object):
         payload_dict = {}
         git_status_foreach(self.repo, read_status_cb, <void*>payload_dict)
         return payload_dict
+
+    cpdef create_tag(self, char* tag_name, oid, git_otype target_type, tagger, char *message):
+        cdef git_oid c_oid
+        cdef git_signature *c_tagger
+        cdef git_object *target
+        cdef char hex[git2.GIT_OID_HEXSZ + 1]
+
+        py_str_to_git_oid(oid, &c_oid)
+        signature_converter(tagger, &c_tagger)
+
+        err = git_object_lookup(&target, self.repo, &c_oid, target_type)
+        if err < 0:
+            git_oid_fmt(hex, &c_oid)
+            hex[git2.GIT_OID_HEXSZ] = '\0'
+            Error_set_str(err, hex);
+
+        err = git_tag_create(&c_oid, self.repo, tag_name, target, c_tagger, message, 0)
+        git_object_close(target)
+        if err < 0:
+            raise RuntimeError
+
+        return git_oid_to_py_str(&c_oid)
 
     def __getitem__(self, value):
         cdef git_oid oid
