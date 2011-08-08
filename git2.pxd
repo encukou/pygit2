@@ -1,0 +1,27 @@
+cdef extern from "git2.h":
+    enum:
+        GIT_OBJ_COMMIT
+        GIT_OBJ_ANY
+        GIT_OBJ_BLOB
+
+        GIT_REF_OID
+        GIT_REF_SYMBOLIC
+
+        GIT_SORT_TIME
+        GIT_SORT_REVERSE
+
+        GIT_STATUS_CURRENT
+        GIT_STATUS_WT_DELETED
+        GIT_STATUS_WT_MODIFIED
+        GIT_STATUS_WT_NEW
+        GIT_STATUS_INDEX_MODIFIED
+        GIT_STATUS_INDEX_DELETED
+        GIT_STATUS_INDEX_NEW
+
+        GIT_ENOTFOUND
+        GIT_EOSERR
+        GIT_ENOTOID
+        GIT_ENOMEM
+        GIT_EREVWALKOVER
+
+        GIT_SUCCESS
