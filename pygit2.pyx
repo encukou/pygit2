@@ -532,7 +532,9 @@ cdef class TreeIter(object):
         return _tree_entry_wrap(tree_entry, self.owner)
 
 cdef class Blob(_GitObject):
-    pass
+    property data:
+        def __get__(self):
+            return self.read_raw()
 
 cdef class Tag(_GitObject):
     cdef _target
