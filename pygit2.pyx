@@ -27,6 +27,7 @@
 
 pygit2 is a set of Python bindings to the libgit2 linkable C Git library.
 """
+cimport cython
 
 cdef extern from "Python.h":
     cdef PyErr_SetFromErrno(type)
@@ -398,11 +399,17 @@ cdef signature_converter(value, git_signature **signature):
     if err < 0:
         Error_set(err);
 
+cdef _new(cls):
+    return cls.__new__(cls)
+
 cdef class TreeEntry(object):
     """A Tree Entry"""
 
     cdef git_tree_entry *entry
     cdef tree
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     property sha:
         """Hex SHA of this entry's object"""
@@ -430,18 +437,23 @@ cdef class TreeEntry(object):
         entry_oid = git_tree_entry_id(self.entry);
         return (<Tree?>self.tree).repo.lookup_object(entry_oid, GIT_OBJ_ANY)
 
-cdef _tree_entry_wrap(git_tree_entry *entry, tree):
+cdef wrap_tree_entry(git_tree_entry *entry, tree):
     """Internal factory function"""
-    py_entry = TreeEntry()
+    cdef TreeEntry py_entry
+
+    py_entry = _new(TreeEntry)
     py_entry.entry = entry
     py_entry.tree = tree
     return py_entry
 
-cdef class _GitObject(object):
+cdef class GitObject(object):
     """Git object (commit, blob, tree, etc.)"""
 
     cdef git_object* obj
     cdef Repository repo
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     def __del__(self):
         git_object_close(self.obj)
@@ -482,7 +494,7 @@ cdef class _GitObject(object):
         finally:
             git_odb_object_close(obj)
 
-cdef class Commit(_GitObject):
+cdef class Commit(GitObject):
     """Commit object"""
 
     cdef git_commit* _commit(self):
@@ -540,6 +552,7 @@ cdef class Commit(_GitObject):
         def __get__(self):
             cdef int err
             cdef git_tree *tree
+            cdef Tree py_tree
 
             err = git_commit_tree(&tree, self._commit())
             if err == git2.GIT_ENOTFOUND:
@@ -548,13 +561,13 @@ cdef class Commit(_GitObject):
             if err < 0:
                 Error_set(err)
 
-            py_tree = Tree()
+            py_tree = _new(Tree)
             py_tree.obj = <git_object*>tree
             py_tree.repo = self.repo
 
             return py_tree
 
-cdef class Tree(_GitObject):
+cdef class Tree(GitObject):
     """Tree object"""
 
     cdef git_tree* _tree(self):
@@ -582,7 +595,7 @@ cdef class Tree(_GitObject):
         entry = git_tree_entry_byindex(self._tree(), self._fix_index(index))
         if entry is NULL:
             raise IndexError(index)
-        return _tree_entry_wrap(entry, self)
+        return wrap_tree_entry(entry, self)
 
     cdef _getitem_by_name(self, name):
         cdef git_tree_entry *entry
@@ -590,7 +603,7 @@ cdef class Tree(_GitObject):
         entry = git_tree_entry_byname(self._tree(), name);
         if entry is NULL:
             raise KeyError(name)
-        return _tree_entry_wrap(entry, self)
+        return wrap_tree_entry(entry, self)
 
     def __getitem__(self, value):
         if isinstance(value, basestring):
@@ -602,7 +615,7 @@ cdef class Tree(_GitObject):
                 type(value).__name__)
 
     def __iter__(self):
-        return TreeIter(self)
+        return TreeIter.__new__(TreeIter, self)
 
     def __len__(self):
         assert self._tree()
@@ -621,6 +634,9 @@ cdef class TreeIter(object):
         self.owner = owner
         self.i = 0
 
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
+
     def __next__(self):
         cdef git_tree_entry *tree_entry
 
@@ -629,9 +645,9 @@ cdef class TreeIter(object):
             raise StopIteration
 
         self.i += 1
-        return _tree_entry_wrap(tree_entry, self.owner)
+        return wrap_tree_entry(tree_entry, self.owner)
 
-cdef class Blob(_GitObject):
+cdef class Blob(GitObject):
     """Blob object"""
 
     property data:
@@ -640,7 +656,7 @@ cdef class Blob(_GitObject):
         def __get__(self):
             return self.read_raw()
 
-cdef class Tag(_GitObject):
+cdef class Tag(GitObject):
     """Tag object"""
 
     cdef _target
@@ -696,6 +712,9 @@ cdef class Reference(object):
     """
 
     cdef git_reference *reference
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     property target:
         """Full name to the reference pointed by this reference
@@ -808,7 +827,9 @@ cdef class Reference(object):
 cdef wrap_reference(git_reference *c_reference):
     """Internal factory function"""
 
-    reference = Reference()
+    cdef Reference reference
+
+    reference = _new(Reference)
     reference.reference = c_reference
     return reference
 
@@ -819,6 +840,9 @@ cdef class IndexEntry(object):
 
     def __cinit__(self, index):
         self.index = index
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     property mode:
         """mode of this entry"""
@@ -833,7 +857,9 @@ cdef class IndexEntry(object):
 cdef wrap_index_entry(git_index_entry *entry, index):
     """Internal factory function"""
 
-    py_entry = IndexEntry(index)
+    cdef IndexEntry py_entry
+
+    py_entry = IndexEntry.__new__(IndexEntry, index)
     py_entry.entry = entry;
     return py_entry
 
@@ -852,6 +878,9 @@ cdef class Index(object):
     def __cinit__(self, repo):
         self.repo = repo
         self.own_obj = 0
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     def __len__(self):
         return git_index_entrycount(self.index)
@@ -889,7 +918,7 @@ cdef class Index(object):
             return True
 
     def __iter__(self):
-        return IndexIter(self)
+        return IndexIter.__new__(IndexIter, self)
 
     cdef int get_position(self, value) except? -5:
         """An internal method used by __getitem__ and __setitem__"""
@@ -983,9 +1012,12 @@ cdef class IndexIter(object):
     cdef Index owner
     cdef int i
 
-    def __init__(self, owner):
+    def __cinit__(self, owner):
         self.owner = owner
         self.i = 0
+
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
 
     def __iter__(self):
         return self
@@ -1010,6 +1042,9 @@ cdef class Walker(object):
     def __cinit__(self, repo):
         self.repo = repo
 
+    def __init__(self):
+        raise TypeError('This class cannot be instantiated directly')
+
     def __del__(self):
         git_revwalk_free(self.walk)
 
@@ -1027,7 +1062,7 @@ cdef class Walker(object):
         if err < 0:
             return Error_set(err);
 
-        py_commit = Commit()
+        py_commit = _new(Commit)
         py_commit.obj = <git_object*>commit
         py_commit.repo = self.repo
         return py_commit
@@ -1095,7 +1130,7 @@ cdef class Repository(object):
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
         cdef git_object *obj
         cdef git_otype otype
-        cdef _GitObject py_obj
+        cdef GitObject py_obj
 
         err = git_object_lookup(&obj, self.repo, oid, type);
         if err < 0:
@@ -1118,7 +1153,7 @@ cdef class Repository(object):
         else:
             raise RuntimeError("Bad Git object type (%s)" % otype)
 
-        py_obj = cls()
+        py_obj = _new(cls)
         py_obj.obj = obj
         py_obj.repo = self
         return py_obj
@@ -1205,7 +1240,7 @@ cdef class Repository(object):
                 if err < 0:
                     Error_set(err)
 
-            walker = Walker(self)
+            walker = Walker.__new__(Walker, self)
             walker.walk = walk
             return walker
 
@@ -1305,13 +1340,14 @@ cdef class Repository(object):
         def __get__(self):
             cdef int err
             cdef git_index *index
+            cdef Index py_index
 
             assert self.repo
 
             if self._index is None:
                 err = git_repository_index(&index, self.repo)
                 if err == git2.GIT_SUCCESS:
-                    py_index = Index(self)
+                    py_index = Index.__new__(Index, self)
                     py_index.index = index
                     self._index = py_index
                 elif err == git2.GIT_EBAREINDEX:
