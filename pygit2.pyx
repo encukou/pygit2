@@ -49,6 +49,7 @@ cdef extern from "git2.h":
     cdef struct git_odb
     cdef struct git_odb_object
     cdef struct git_reference
+    cdef struct git_index
     cdef struct git_time:
         git_time_t time
         int offset
@@ -60,6 +61,7 @@ cdef extern from "git2.h":
         pass
     ctypedef enum git_rtype:
         pass
+    ctypedef long git_off_t
 
     # oid.h
     ctypedef struct git_oid:
@@ -72,6 +74,38 @@ cdef extern from "git2.h":
     char *git_commit_message_short(git_commit *commit)
     char *git_commit_message(git_commit *commit)
     int git_commit_lookup(git_commit **commit, git_repository *repo, git_oid *id)
+
+    # index.h
+    ctypedef struct git_index_time:
+        git_time_t seconds
+        unsigned int nanoseconds
+    cdef struct git_index_entry:
+        git_index_time ctime
+        git_index_time mtime
+
+        unsigned int dev
+        unsigned int ino
+        unsigned int mode
+        unsigned int uid
+        unsigned int gid
+        git_off_t file_size
+
+        git_oid oid
+
+        unsigned short flags
+        unsigned short flags_extended
+
+        char *path
+
+    unsigned int git_index_entrycount(git_index *index)
+    int git_index_add(git_index *index, char *path, int stage)
+    int git_index_write(git_index *index)
+    git_index_entry * git_index_get(git_index *index, unsigned int n)
+    int git_index_find(git_index *index, char *path)
+    void git_index_clear(git_index *index)
+    int git_index_remove(git_index *index, int position)
+    int git_index_read(git_index *index)
+    int git_tree_create_fromindex(git_oid *oid, git_index *index)
 
     # object.h
     int git_object_lookup(git_object **object, git_repository *repo,
@@ -108,6 +142,7 @@ cdef extern from "git2.h":
     int git_repository_open(git_repository **repository, char *path)
     char *git_repository_path(git_repository *repo, git_repository_pathid id)
     git_odb *git_repository_database(git_repository *repo)
+    int git_repository_index(git_index **index, git_repository *repo)
 
     # revwalk.h
     void git_revwalk_sorting(git_revwalk *walk, unsigned int sort_mode)
@@ -562,6 +597,145 @@ cdef wrap_reference(git_reference *c_reference):
     reference.reference = c_reference
     return reference
 
+cdef class IndexEntry(object):
+    cdef git_index_entry *entry
+    cdef index
+
+    def __cinit__(self, index):
+        self.index = index
+
+    property mode:
+        def __get__(self):
+            return self.entry.mode
+
+    property sha:
+        def __get__(self):
+            return git_oid_to_py_str(&self.entry.oid)
+
+cdef wrap_index_entry(git_index_entry *entry, index):
+    py_entry = IndexEntry(index)
+    py_entry.entry = entry;
+    return py_entry
+
+cdef class Index(object):
+    cdef git_index *index
+    cdef Repository repo
+    cdef int own_obj
+
+    def __cinit__(self, repo):
+        self.repo = repo
+        self.own_obj = 0
+
+    def add(self, char *path, int stage=0):
+        cdef int err
+
+        err = git_index_add(self.index, path, stage)
+        if err < 0:
+            Error_set_str(err, path)
+
+    def __len__(self):
+        return git_index_entrycount(self.index)
+
+    def write(self):
+        cdef int err
+
+        err = git_index_write(self.index)
+        if err < git2.GIT_SUCCESS:
+            Error_set(err)
+
+    def read(self):
+        cdef int err
+
+        err = git_index_read(self.index)
+        if err < git2.GIT_SUCCESS:
+            Error_set(err)
+
+    def clear(self):
+        git_index_clear(self.index)
+
+    cdef int get_position(self, value) except? -5:
+        # This is an internal function, used by __getitem__ and __setitem__
+        cdef int idx
+
+        if isinstance(value, basestring):
+            idx = git_index_find(self.index, value)
+            if idx < 0:
+                Error_set_str(idx, value)
+        elif isinstance(value, int):
+            idx = value
+            if idx < 0:
+                raise ValueError(value)
+        else:
+            raise TypeError("Index entry key must be int or str, not %.200s" %
+                     type(value).__name__)
+
+        return idx
+
+    def __getitem__(self, value):
+        cdef int idx
+        cdef git_index_entry *index_entry
+
+        index_entry = git_index_get(self.index, self.get_position(value))
+        if index_entry is NULL:
+            raise KeyError(value)
+
+        return wrap_index_entry(index_entry, self)
+
+    def __setitem__(self, key, value):
+        raise NotImplementedError("set item on index not yet implemented")
+
+    def __delitem__(self, key):
+        cdef int err
+
+        err = git_index_remove(self.index, self.get_position(key))
+        if err < 0:
+            Error_set(err);
+
+    def __contains__(self, char *path):
+        cdef int idx
+
+        idx = git_index_find(self.index, path);
+        if idx == git2.GIT_ENOTFOUND:
+            return False
+        elif idx < 0:
+            Error_set_str(idx, path)
+        else:
+            return True
+
+    def __iter__(self):
+        return IndexIter(self)
+
+    def create_tree(self):
+        cdef git_oid oid
+        cdef int err
+
+        err = git_tree_create_fromindex(&oid, self.index)
+        if err < 0:
+            Error_set(err)
+
+        return git_oid_to_py_str(&oid)
+
+cdef class IndexIter(object):
+    cdef Index owner
+    cdef int i
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.i = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        cdef git_index_entry *index_entry
+
+        index_entry = git_index_get(self.owner.index, self.i)
+        if index_entry is NULL:
+            raise StopIteration
+
+        self.i += 1
+        return wrap_index_entry(index_entry, self.owner)
+
 cdef class Walker(object):
     cdef git_revwalk *walk
     cdef Repository repo
@@ -606,6 +780,7 @@ cdef class Walker(object):
 
 cdef class Repository(object):
     cdef git_repository* repo
+    cdef _index
 
     def __cinit__(self, path):
         cdef int err
@@ -839,3 +1014,23 @@ cdef class Repository(object):
             return tuple(result)
         finally:
             git_strarray_free(&c_result)
+
+    property index:
+        def __get__(self):
+            cdef int err
+            cdef git_index *index
+
+            assert self.repo
+
+            if self._index is None:
+                err = git_repository_index(&index, self.repo)
+                if err == git2.GIT_SUCCESS:
+                    py_index = Index(self)
+                    py_index.index = index
+                    self._index = py_index
+                elif err == git2.GIT_EBAREINDEX:
+                    self._index = False
+                else:
+                    Error_set(err)
+
+            return self._index or None

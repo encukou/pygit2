@@ -57,6 +57,7 @@ cdef extern from "git2.h":
         GIT_ENOTOID
         GIT_ENOMEM
         GIT_EREVWALKOVER
+        GIT_EBAREINDEX
 
         GIT_SUCCESS
 
