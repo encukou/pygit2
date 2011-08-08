@@ -39,6 +39,8 @@ cdef extern from "git2.h":
     cdef struct git_tag
     cdef struct git_commit
     cdef struct git_revwalk
+    cdef struct git_odb
+    cdef struct git_odb_object
     cdef struct git_time:
         git_time_t time
         int offset
@@ -68,8 +70,34 @@ cdef extern from "git2.h":
     git_oid *git_object_id(git_object *obj)
     void git_object_close(git_object *object)
 
+    # odb_backend.h
+    cdef struct git_odb_backend
+    ctypedef struct git_odb_stream:
+        git_odb_backend *backend
+        int mode
+
+        int (*read)(git_odb_stream *stream, char *buffer, size_t len)
+        int (*write)(git_odb_stream *stream, char *buffer, size_t len)
+        int (*finalize_write)(git_oid *oid_p, git_odb_stream *stream)
+        void (*free)(git_odb_stream *stream)
+
+    # odb.h
+    int git_odb_open_wstream(git_odb_stream **stream, git_odb *db, size_t size, git_otype type)
+    void git_odb_object_close(git_odb_object *object)
+    size_t git_odb_object_size(git_odb_object *object)
+    void *git_odb_object_data(git_odb_object *object)
+    git_otype git_odb_object_type(git_odb_object *object)
+    int git_odb_read(git_odb_object **out, git_odb *db, git_oid *id)
+    int git_odb_exists(git_odb *db, git_oid *id)
+
     # repository.h
+    ctypedef enum git_repository_pathid:
+        GIT_REPO_PATH_WORKDIR
+        GIT_REPO_PATH
+
     int git_repository_open(git_repository **repository, char *path)
+    char *git_repository_path(git_repository *repo, git_repository_pathid id)
+    git_odb *git_repository_database(git_repository *repo)
 
     # revwalk.h
     void git_revwalk_sorting(git_revwalk *walk, unsigned int sort_mode)
@@ -186,6 +214,12 @@ cdef Error_set(int err):
         PyErr_SetFromErrno(GitError)
     raise Error_type(err)(git_lasterror())
 
+cdef git_otype int_to_loose_object_type(int type_id):
+    if type_id in (GIT_OBJ_COMMIT, GIT_OBJ_TREE, GIT_OBJ_BLOB, GIT_OBJ_TAG):
+        return <git_otype>type_id
+    else:
+        return GIT_OBJ_BAD
+
 cdef int read_status_cb(char *path, unsigned int status_flags,
                           void *payload_dict):
     """ This is the callback that will be called in git_status_foreach. It
@@ -274,6 +308,22 @@ cdef class _GitObject(object):
     property type:
         def __get__(self):
             return git_object_type(self.obj)
+
+    def read_raw(self):
+        cdef git_odb_object *obj
+
+        id = git_object_id(self.obj)
+        if not id:
+            return None  # in-memory object
+
+        err = self.repo.read_raw(&obj, id)
+        if err < 0:
+            Error_set_py_obj(err, self.sha)
+
+        try:
+            return (<char*>git_odb_object_data(obj))[:git_odb_object_size(obj)]
+        finally:
+            git_odb_object_close(obj)
 
 cdef class Commit(_GitObject):
     cdef git_commit* _commit(self):
@@ -553,3 +603,75 @@ cdef class Repository(object):
         py_str_to_git_oid(value, &oid)
 
         return self.lookup_object(&oid, GIT_OBJ_ANY)
+
+
+    def __contains__(self, value):
+        cdef git_oid oid
+
+        py_str_to_git_oid(value, &oid)
+        return git_odb_exists(git_repository_database(self.repo), &oid)
+
+    cdef int read_raw(self, git_odb_object **obj, git_oid *oid):
+        return git_odb_read(obj, git_repository_database(self.repo), oid)
+
+    def read(self, hex):
+        cdef git_oid oid
+        cdef int err
+        cdef git_odb_object *obj
+
+        py_str_to_git_oid(hex, &oid)
+
+        err = self.read_raw(&obj, &oid)
+        if err < 0:
+            return Error_set_py_obj(err, hex);
+
+        length = git_odb_object_size(obj)
+        retval = (git_odb_object_type(obj),
+            (<char *>git_odb_object_data(obj))[:length])
+
+        git_odb_object_close(obj)
+        return retval
+
+    def write(self, int type_id, buffer):
+        cdef git_otype type
+        cdef git_odb* odb
+        cdef int err
+        cdef git_odb_stream* stream
+        cdef git_oid oid
+
+        type = int_to_loose_object_type(type_id)
+        if type == GIT_OBJ_BAD:
+            return Error_set_str(-100, "Invalid object type")
+
+        odb = git_repository_database(self.repo)
+
+        err = git_odb_open_wstream(&stream, odb, len(buffer), type);
+        if err == git2.GIT_SUCCESS:
+            b = str(buffer)
+            stream.write(stream, b, len(buffer))
+            err = stream.finalize_write(&oid, stream)
+            stream.free(stream)
+        if err < 0:
+            return Error_set_str(err, "failed to write data")
+
+        return git_oid_to_py_str(&oid)
+
+    property workdir:
+        def __get__(self):
+            cdef char *c_path
+
+            c_path = git_repository_path(self.repo, GIT_REPO_PATH_WORKDIR);
+            if c_path is NULL:
+                return None
+
+            return c_path
+
+    property path:
+        def __get__(self):
+            cdef char *c_path
+
+            c_path = git_repository_path(self.repo, GIT_REPO_PATH);
+            if c_path is NULL:
+                return None
+
+            return c_path
