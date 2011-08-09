@@ -270,13 +270,12 @@ GIT_STATUS_IGNORED = git2.GIT_STATUS_IGNORED
 
 import sys
 
+from cpython cimport PY_MAJOR_VERSION
+
 cdef bint py3
-if sys.version_info < (3, 0):
-    _basestring = (str, unicode)
-    py3 = False
-else:
-    _basestring = (str, bytes)
-    py3 = True
+py3 = PY_MAJOR_VERSION >= 3
+
+cdef filesystemencoding = sys.getfilesystemencoding()
 
 cdef class Repository
 cdef class GitObject
@@ -290,13 +289,18 @@ class GitError(Exception):
 cdef Error_type(int err):
     """Return the correct Python exception class based on Git error code
     """
-    return {
-            git2.GIT_ENOTFOUND: KeyError,
-            git2.GIT_EOSERR: OSError,
-            git2.GIT_ENOTOID: ValueError,
-            git2.GIT_ENOMEM: MemoryError,
-            git2.GIT_EREVWALKOVER: StopIteration,
-        }.get(err, GitError)
+    if err == git2.GIT_ENOTFOUND:
+        return KeyError
+    elif err == git2.GIT_EOSERR:
+        return OSError
+    elif err == git2.GIT_ENOTOID:
+        return ValueError
+    elif err == git2.GIT_ENOMEM:
+        return MemoryError
+    elif err == git2.GIT_EREVWALKOVER:
+        return StopIteration
+    else:
+        return GitError
 
 cdef err_str(message, int err):
     """Handle the given Git error code and a string message
@@ -317,7 +321,7 @@ cdef err_obj(py_obj, int err):
     """
     if err >= 0:
         return
-    elif err == git2.GIT_ENOTOID and not isinstance(py_obj, _basestring):
+    elif err == git2.GIT_ENOTOID and not isinstance(py_obj, (bytes, unicode)):
         raise TypeError("Git object id must be 40 byte hexadecimal str, "
                 "or 20 byte binary str: %.200s" % type(py_obj).__name__)
     elif err == git2.GIT_ENOTFOUND:
@@ -353,7 +357,7 @@ cdef encode_path(py_path):
     8-bit paths are unchanged,
     """
     if isinstance(py_path, unicode):
-        return py_path.encode(sys.getfilesystemencoding())
+        return py_path.encode(filesystemencoding)
     else:
         return py_path
 
@@ -364,16 +368,17 @@ cdef decode_path(char *c_path):
     """
     py_path = c_path
     if py3:
-        return py_path.decode(sys.getfilesystemencoding())
+        return py_path.decode(filesystemencoding)
     else:
         return py_path
 
 cdef git_otype int_to_loose_object_type(int type_id):
     """Validate and convert a loose object type ID"""
-    if type_id in (GIT_OBJ_COMMIT, GIT_OBJ_TREE, GIT_OBJ_BLOB, GIT_OBJ_TAG):
+    if type_id in (git2.GIT_OBJ_COMMIT, git2.GIT_OBJ_TREE, git2.GIT_OBJ_BLOB,
+            git2.GIT_OBJ_TAG):
         return <git_otype>type_id
     else:
-        return GIT_OBJ_BAD
+        return git2.GIT_OBJ_BAD
 
 cdef int read_status_cb(char *path, unsigned int status_flags,
                           void *payload_dict):
@@ -390,7 +395,7 @@ cdef py_str_to_git_oid(py_str, git_oid *oid):
     """Convert a Python string with the a SHA to a git_oid
     """
 
-    if not isinstance(py_str, _basestring):
+    if not isinstance(py_str, (bytes, unicode)):
         err_obj(py_str, git2.GIT_ENOTOID)
 
     if py3 and isinstance(py_str, unicode):
@@ -442,8 +447,9 @@ class Signature(tuple):
 
 cdef build_person(git_signature *signature, Repository repo):
     """Build a signature 4-tuple from a git_signature*"""
-    return Signature([repo.decode(signature.name), repo.decode(signature.email),
-            signature.when.time, signature.when.offset])
+    return Signature((repo.decode(signature.name),
+            repo.decode(signature.email), signature.when.time,
+            signature.when.offset))
 
 cdef signature_converter(value, git_signature **signature, Repository repo):
     """Convert a signature 4-tuple to a git_signature*"""
@@ -660,7 +666,7 @@ cdef class Tree(GitObject):
         return wrap_tree_entry(entry, self)
 
     def __getitem__(self, value):
-        if isinstance(value, _basestring):
+        if isinstance(value, (bytes, unicode)):
             return self._getitem_by_name(value)
         elif isinstance(value, int):
             return self._getitem_by_index(value)
@@ -995,7 +1001,7 @@ cdef class Index(object):
 
         cdef int idx
 
-        if isinstance(value, _basestring):
+        if isinstance(value, (bytes, unicode)):
             encoded_value = self.repo.encode(value)
             idx = git_index_find(self.index, encoded_value)
             if idx < 0:
@@ -1256,7 +1262,7 @@ cdef class Repository(object):
         cdef int error
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
         cdef git_object *obj
-        cdef git_otype otype
+        cdef int otype
         cdef GitObject py_obj
 
         error = git_object_lookup(&obj, self.repo, oid, type)
@@ -1269,13 +1275,13 @@ cdef class Repository(object):
             raise MemoryError()
 
         otype = git_object_type(obj)
-        if otype == GIT_OBJ_COMMIT:
+        if otype == git2.GIT_OBJ_COMMIT:
             cls = Commit
-        elif otype == GIT_OBJ_TREE:
+        elif otype == git2.GIT_OBJ_TREE:
             cls = Tree
-        elif otype == GIT_OBJ_BLOB:
+        elif otype == git2.GIT_OBJ_BLOB:
             cls = Blob
-        elif otype == GIT_OBJ_TAG:
+        elif otype == git2.GIT_OBJ_TAG:
             cls = Tag
         else:
             raise RuntimeError("Bad Git object type (%s)" % otype)
@@ -1354,7 +1360,7 @@ cdef class Repository(object):
         cdef Walker walker
         cdef git_oid oid
 
-        if value is not None and not isinstance(value, _basestring):
+        if value is not None and not isinstance(value, (bytes, unicode)):
             raise TypeError(value)
 
         err(git_revwalk_new(&walk, self.repo))
@@ -1419,7 +1425,10 @@ cdef class Repository(object):
 
         odb = git_repository_database(self.repo)
 
-        data = bytes(self.encode(data))
+        if isinstance(data, unicode):
+            data = self.encode(data)
+        elif not isinstance(data, bytes):
+            data = bytes(data)
         error = git_odb_open_wstream(&stream, odb, len(data), type)
         if error == git2.GIT_SUCCESS:
             stream.write(stream, data, len(data))
