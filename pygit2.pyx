@@ -274,7 +274,20 @@ GIT_STATUS_WT_DELETED = git2.GIT_STATUS_WT_DELETED
 # Flags for ignored files
 GIT_STATUS_IGNORED = git2.GIT_STATUS_IGNORED
 
+import sys
+
+cdef bint py3
+if sys.version_info < (3, 0):
+    _basestring = (str, unicode)
+    py3 = False
+else:
+    _basestring = (str, bytes)
+    py3 = True
+
 cdef class Repository
+cdef class GitObject
+cdef class Index
+cdef class Tree
 
 class GitError(Exception):
     """Thrown when something is wrong in libgit2."""
@@ -310,7 +323,7 @@ cdef err_obj(py_obj, int err):
     """
     if err >= 0:
         return
-    elif err == git2.GIT_ENOTOID and not isinstance(py_obj, basestring):
+    elif err == git2.GIT_ENOTOID and not isinstance(py_obj, _basestring):
         raise TypeError("Git object id must be 40 byte hexadecimal str, "
                 "or 20 byte binary str: %.200s" % type(py_obj).__name__)
     elif err == git2.GIT_ENOTFOUND:
@@ -340,6 +353,27 @@ cdef err(int err):
         PyErr_SetFromErrno(GitError)
     raise Error_type(err)(git_lasterror())
 
+cdef encode_path(py_path):
+    """Encode unicode paths using the filesystem encoding.
+
+    8-bit paths are unchanged,
+    """
+    if isinstance(py_path, unicode):
+        return py_path.encode(sys.getfilesystemencoding())
+    else:
+        return py_path
+
+cdef decode_path(char *c_path):
+    """On py3k, encode paths using the filesystem encoding.
+
+    Otherwise, the path is unchanged,
+    """
+    py_path = c_path
+    if py3:
+        return py_path.decode(sys.getfilesystemencoding())
+    else:
+        return py_path
+
 cdef git_otype int_to_loose_object_type(int type_id):
     """Validate and convert a loose object type ID"""
     if type_id in (GIT_OBJ_COMMIT, GIT_OBJ_TREE, GIT_OBJ_BLOB, GIT_OBJ_TAG):
@@ -360,10 +394,11 @@ cdef py_str_to_git_oid(py_str, git_oid *oid):
     """Convert a Python string with the a SHA to a git_oid
     """
 
-    if not isinstance(py_str, basestring):
+    if not isinstance(py_str, _basestring):
         err_obj(py_str, git2.GIT_ENOTOID)
 
-    hex_or_bin = py_str
+    if py3 and isinstance(py_str, unicode):
+        py_str = py_str.encode('ascii')
 
     if len(py_str) == 20:
         git_oid_fromraw(oid, py_str)
@@ -371,13 +406,17 @@ cdef py_str_to_git_oid(py_str, git_oid *oid):
         err_obj(py_str, git_oid_fromstr(oid, py_str))
 
 cdef git_oid_to_py_str(git_oid *oid):
-    """Convert a git_oid to a Python bytestring with the hex SHA
+    """Convert a git_oid to a Python string with the hex SHA
     """
 
     cdef char hex[git2.GIT_OID_HEXSZ]
 
     git_oid_fmt(hex, oid)
-    return hex
+    py_hex = hex[:git2.GIT_OID_HEXSZ]
+    if py3:
+        return py_hex.decode('ascii')
+    else:
+        return py_hex
 
 class Signature(tuple):
     """A signature with a person's name, e-mail and signing time.
@@ -405,15 +444,17 @@ class Signature(tuple):
         """Time offset of the signature"""
         return self[3]
 
-cdef build_person(git_signature *signature):
+cdef build_person(git_signature *signature, Repository repo):
     """Build a signature 4-tuple from a git_signature*"""
-    return Signature([signature.name, signature.email,
+    return Signature([repo.decode(signature.name), repo.decode(signature.email),
             signature.when.time, signature.when.offset])
 
-cdef signature_converter(value, git_signature **signature):
+cdef signature_converter(value, git_signature **signature, Repository repo):
     """Convert a signature 4-tuple to a git_signature*"""
 
     name, email, time, offset = value
+    name = repo.encode(name)
+    email = repo.encode(email)
 
     err(git_signature_new(signature, name, email, time, offset))
 
@@ -424,7 +465,7 @@ cdef class TreeEntry(object):
     """A Tree Entry"""
 
     cdef git_tree_entry *entry
-    cdef tree
+    cdef Tree tree
 
     def __init__(self):
         raise TypeError('This class cannot be instantiated directly')
@@ -439,7 +480,7 @@ cdef class TreeEntry(object):
         """Filename of this entry"""
 
         def __get__(self):
-            return git_tree_entry_name(self.entry)
+            return self.tree.repo.decode(git_tree_entry_name(self.entry))
 
     property attributes:
         """UNIX file attributes of this entry"""
@@ -520,13 +561,13 @@ cdef class Commit(GitObject):
         """The short (one line) message of this commit."""
 
         def __get__(self):
-            return git_commit_message_short(self._commit())
+            return self.repo.decode(git_commit_message_short(self._commit()))
 
     property message:
         """The full message of this commit."""
 
         def __get__(self):
-            return git_commit_message(self._commit())
+            return self.repo.decode(git_commit_message(self._commit()))
 
     property parents:
         """The parent commits of this commit."""
@@ -554,13 +595,14 @@ cdef class Commit(GitObject):
         """The comitter's signature"""
 
         def __get__(self):
-            return build_person(git_commit_committer(self._commit()))
+            return build_person(git_commit_committer(self._commit()),
+                self.repo)
 
     property author:
         """The author's signature"""
 
         def __get__(self):
-            return build_person(git_commit_author(self._commit()))
+            return build_person(git_commit_author(self._commit()), self.repo)
 
     property tree:
         """The tree pointed to by this commit."""
@@ -615,13 +657,14 @@ cdef class Tree(GitObject):
     cdef _getitem_by_name(self, name):
         cdef git_tree_entry *entry
 
-        entry = git_tree_entry_byname(self._tree(), name);
+        e_name = self.repo.encode(name)
+        entry = git_tree_entry_byname(self._tree(), e_name);
         if entry is NULL:
             raise KeyError(name)
         return wrap_tree_entry(entry, self)
 
     def __getitem__(self, value):
-        if isinstance(value, basestring):
+        if isinstance(value, _basestring):
             return self._getitem_by_name(value)
         elif isinstance(value, int):
             return self._getitem_by_index(value)
@@ -636,7 +679,8 @@ cdef class Tree(GitObject):
         assert self._tree()
         return git_tree_entrycount(self._tree())
 
-    def __contains__(self, char *name):
+    def __contains__(self, name):
+        name = self.repo.encode(name)
         return git_tree_entry_byname(self._tree(), name) is not NULL
 
 cdef class TreeIter(object):
@@ -671,6 +715,15 @@ cdef class Blob(GitObject):
         def __get__(self):
             return self.read_raw()
 
+    property string:
+        """This blob's data, as a string
+
+        under Python 2, this is the same as data
+        """
+
+        def __get__(self):
+            return self.repo.decode(self.data)
+
 cdef class Tag(GitObject):
     """Tag object"""
 
@@ -702,7 +755,7 @@ cdef class Tag(GitObject):
             cdef char *name = git_tag_name(self._tag())
             if name is NULL:
                 return None
-            return name
+            return self.repo.decode(name)
 
     property tagger:
         """The tagger's signature (name, e-mail, tagging time)"""
@@ -711,7 +764,7 @@ cdef class Tag(GitObject):
             cdef git_signature *signature = git_tag_tagger(self._tag())
             if signature is NULL:
                 return None
-            return build_person(signature)
+            return build_person(signature, self.repo)
 
     property message:
         """Message of this tag"""
@@ -720,13 +773,14 @@ cdef class Tag(GitObject):
             cdef char *message = git_tag_message(self._tag())
             if message is NULL:
                 return None
-            return message
+            return self.repo.decode(message)
 
 cdef class Reference(object):
     """Reference
     """
 
     cdef git_reference *reference
+    cdef Repository repo
 
     def __init__(self):
         raise TypeError('This class cannot be instantiated directly')
@@ -744,15 +798,16 @@ cdef class Reference(object):
             if name is NULL:
                 raise ValueError("Not target available")
 
-            return name
+            return self.repo.decode(name)
 
-        def __set__(self, char *name):
+        def __set__(self, name):
+            name = self.repo.encode(name)
             err(git_reference_set_target(self.reference, name))
 
     property name:
         """The full name of this reference."""
         def __get__(self):
-            return git_reference_name(self.reference)
+            return self.repo.decode(git_reference_name(self.reference))
 
     property type:
         """Reference type (GIT_REF_OID, GIT_REF_SYMBOLIC or GIT_REF_PACKED).
@@ -785,7 +840,7 @@ cdef class Reference(object):
 
             err(git_reference_set_oid(self.reference, &oid))
 
-    def rename(self, char *name):
+    def rename(self, name):
         """Rename the reference.
 
         This method works for both direct and symbolic references.
@@ -795,6 +850,7 @@ cdef class Reference(object):
         The refernece will be immediately renamed in-memory and on disk.
         """
 
+        name = self.repo.encode(name)
         err(git_reference_rename(self.reference, name, 0))
 
     def resolve(self):
@@ -809,7 +865,7 @@ cdef class Reference(object):
 
         err(git_reference_resolve(&c_reference, self.reference))
 
-        return wrap_reference(c_reference)
+        return wrap_reference(c_reference, self.repo)
 
     def delete(self):
         """Delete this reference. It will no longer be valid!
@@ -821,24 +877,25 @@ cdef class Reference(object):
 
         self.reference = NULL
 
-cdef wrap_reference(git_reference *c_reference):
+cdef wrap_reference(git_reference *c_reference, Repository repo):
     """Internal factory function"""
 
     cdef Reference reference
 
     reference = _new(Reference)
     reference.reference = c_reference
+    reference.repo = repo
     return reference
 
 cdef class IndexEntry(object):
     """Index entry"""
     cdef git_index_entry *entry
-    cdef index
+    cdef Index index
 
     def __cinit__(self, index):
         self.index = index
 
-    def __init__(self):
+    def __init__(self, index):
         raise TypeError('This class cannot be instantiated directly')
 
     property mode:
@@ -854,7 +911,7 @@ cdef class IndexEntry(object):
     property path:
         """filename of this entry"""
         def __get__(self):
-            return self.entry.path
+            return self.index.repo.decode(self.entry.path)
 
 cdef wrap_index_entry(git_index_entry *entry, index):
     """Internal factory function"""
@@ -892,8 +949,7 @@ cdef class Index(object):
         use the Repository.index wrapper.
         """
 
-        cdef char *c_path
-        c_path = path
+        path = encode_path(path)
 
         err_str(path, git_index_open(&self.index, path))
 
@@ -923,9 +979,10 @@ cdef class Index(object):
     def __delitem__(self, key):
         err(git_index_remove(self.index, self.get_position(key)))
 
-    def __contains__(self, char *path):
+    def __contains__(self, path):
         cdef int idx
 
+        path = self.repo.encode(path)
         idx = git_index_find(self.index, path);
         if idx == git2.GIT_ENOTFOUND:
             return False
@@ -942,8 +999,9 @@ cdef class Index(object):
 
         cdef int idx
 
-        if isinstance(value, basestring):
-            idx = git_index_find(self.index, value)
+        if isinstance(value, _basestring):
+            encoded_value = self.repo.encode(value)
+            idx = git_index_find(self.index, encoded_value)
             if idx < 0:
                 err_str(value, idx)
         elif isinstance(value, int):
@@ -956,7 +1014,7 @@ cdef class Index(object):
 
         return idx
 
-    def add(self, char *path, int stage=0):
+    def add(self, path, int stage=0):
         """Add or update an index entry from a file on disk.
 
         This method will fail on bare index instances.
@@ -966,6 +1024,8 @@ cdef class Index(object):
         `stage`: Stage for the entry
         """
 
+        # TODO: encode_path or self.repo.encode? The should be in sync...
+        path = encode_path(path)
         err_str(path, git_index_add(self.index, path, stage))
 
     def read(self):
@@ -1115,12 +1175,30 @@ cdef class Walker(object):
 
 cdef class Repository(object):
     """Git repository
+
+    A repository's `encoding` argument specifies the encoding for paths,
+    messages, reference/tag/author names, etc. in the repository.
+
+    In Python 2, `encoding` is None by default, which means that the Repository
+    will give unencoded byte strings. In this case, unicode strings are
+    accepted, and decoded using UTF-8.
+
+    In Python 3, `encoding` is 'utf-8' by default. Setting it to None will
+    cause the Repository to only accept raw byte strings.
     """
 
     cdef git_repository* repo
     cdef _index
+    cdef str encoding
+
+    def __cinit__(self, path=None):
+        if py3:
+            self.encoding = 'utf-8'
+        else:
+            self.encoding = None
 
     def __init__(self, path):
+        path = encode_path(path)
         err_str(path, git_repository_open(&self.repo, path))
 
     def __del__(self):
@@ -1147,6 +1225,34 @@ cdef class Repository(object):
 
         py_str_to_git_oid(value, &oid)
         return git_odb_exists(git_repository_database(self.repo), &oid)
+
+    cdef encode(self, string):
+        """Encode any string to a bytestring, honoring the `encoding` attribute
+        """
+
+        if isinstance(string, unicode):
+            if self.encoding is None:
+                if py3:
+                    raise TypeError('This repository only accepts byte '
+                        'strings')
+                else:
+                    return string.encode('utf-8')
+            else:
+                return string.encode(self.encoding)
+        else:
+            return string
+
+    cdef decode(self, char *string):
+        """Decode a C bytestring into some Python string, honoring `encoding`.
+
+        """
+        # TODO: Properly support other encodings than UTF-8? Does anyone care?
+
+        if self.encoding is None:
+            return string
+        else:
+            py_string = string
+            return py_string.decode(self.encoding)
 
     cdef lookup_object(self, git_oid *oid, git_otype type):
         """Internal method used in __getitem__, etc."""
@@ -1196,8 +1302,8 @@ cdef class Repository(object):
         git_status_foreach(self.repo, read_status_cb, <void*>payload_dict)
         return payload_dict
 
-    cpdef create_tag(self, char* tag_name, sha, git_otype target_type, tagger,
-            char *message):
+    cpdef create_tag(self, tag_name, sha, git_otype target_type, tagger,
+            message):
         """Create a new tag object, return its SHA.
 
         `tag_name`:  Name for the tag; this name is validated for consistency.
@@ -1215,8 +1321,11 @@ cdef class Repository(object):
         cdef git_object *target
         cdef char hex[git2.GIT_OID_HEXSZ + 1]
 
+        tag_name = self.encode(tag_name)
+        message = self.encode(message)
+
         py_str_to_git_oid(sha, &c_oid)
-        signature_converter(tagger, &c_tagger)
+        signature_converter(tagger, &c_tagger, self)
 
         error = git_object_lookup(&target, self.repo, &c_oid, target_type)
         if error < 0:
@@ -1248,7 +1357,7 @@ cdef class Repository(object):
         cdef Walker walker
         cdef git_oid oid
 
-        if value is not None and not isinstance(value, basestring):
+        if value is not None and not isinstance(value, _basestring):
             raise TypeError(value)
 
         err(git_revwalk_new(&walk, self.repo))
@@ -1293,11 +1402,11 @@ cdef class Repository(object):
         git_odb_object_close(obj)
         return retval
 
-    def write(self, int type_id, buffer):
+    def write(self, int type_id, data):
         """"Write raw object data into the repository.
 
         `type_id`:  The object type
-        `buffer`: A buffer (str) with data.
+        `data`: A string with data.
 
         Return the hexadecimal SHA of the created object.
         """
@@ -1313,10 +1422,10 @@ cdef class Repository(object):
 
         odb = git_repository_database(self.repo)
 
-        error = git_odb_open_wstream(&stream, odb, len(buffer), type);
+        data = bytes(self.encode(data))
+        error = git_odb_open_wstream(&stream, odb, len(data), type);
         if error == git2.GIT_SUCCESS:
-            b = str(buffer)
-            stream.write(stream, b, len(buffer))
+            stream.write(stream, data, len(data))
             error = stream.finalize_write(&oid, stream)
             stream.free(stream)
         err_str("failed to write data", error)
@@ -1336,7 +1445,7 @@ cdef class Repository(object):
             if c_path is NULL:
                 return None
 
-            return c_path
+            return decode_path(c_path)
 
     property path:
         """The normalized path to the git repository.
@@ -1349,7 +1458,7 @@ cdef class Repository(object):
             if c_path is NULL:
                 return None
 
-            return c_path
+            return decode_path(c_path)
 
     property index:
         """Index file.
@@ -1375,17 +1484,18 @@ cdef class Repository(object):
 
             return self._index or None
 
-    def lookup_reference(self, char *name):
+    def lookup_reference(self, name):
         """Lookup a reference by its name in this repository.
         """
 
         cdef git_reference *c_reference
 
+        name = self.encode(name)
         err(git_reference_lookup(&c_reference, self.repo, name))
 
-        return wrap_reference(c_reference);
+        return wrap_reference(c_reference, self)
 
-    def create_reference(self, char *name, sha):
+    def create_reference(self, name, sha):
         """Create a new direct (object id) reference
 
         The reference will be created in the repository and written to the
@@ -1398,12 +1508,13 @@ cdef class Repository(object):
         cdef git_oid oid
 
         py_str_to_git_oid(sha, &oid)
+        name = self.encode(name)
 
         err(git_reference_create_oid(&c_reference, self.repo, name, &oid, 0))
 
-        return wrap_reference(c_reference);
+        return wrap_reference(c_reference, self)
 
-    def create_symbolic_reference(self, char *name, char *target):
+    def create_symbolic_reference(self, name, target):
         """Create a new symbolic reference.
 
         The reference will be created in the repository and written to the
@@ -1415,10 +1526,12 @@ cdef class Repository(object):
 
         cdef git_reference *reference
 
+        name = self.encode(name)
+        target = self.encode(target)
         err(git_reference_create_symbolic(&reference, self.repo, name,
                 target, 0))
 
-        return wrap_reference(reference)
+        return wrap_reference(reference, self)
 
     def packall_references(self):
         """Pack all the loose references in the repository.
@@ -1451,12 +1564,12 @@ cdef class Repository(object):
         try:
             result = []
             for index in range(c_result.count):
-                result.append(c_result.strings[index])
+                result.append(decode_path(c_result.strings[index]))
             return tuple(result)
         finally:
             git_strarray_free(&c_result)
 
-    def create_commit(self, update_ref, author, committer, char *message,
+    def create_commit(self, update_ref, author, committer, message,
                 tree, parent_list):
         """Create a new commit object, return its SHA.
 
@@ -1486,9 +1599,10 @@ cdef class Repository(object):
         if update_ref is not None:
             c_update_ref = update_ref
 
-        signature_converter(author, &c_author)
-        signature_converter(committer, &c_committer)
+        signature_converter(author, &c_author, self)
+        signature_converter(committer, &c_committer, self)
         py_str_to_git_oid(tree, &oid)
+        message = self.encode(message)
 
         err(git_tree_lookup(&c_tree, self.repo, &oid))
 
@@ -1521,7 +1635,7 @@ cdef class Repository(object):
         finally:
             git_tree_close(c_tree)
 
-def init_repository(char *path, bint bare=False):
+def init_repository(path, bint bare=False):
     """Creates a new Git repository in the given directory.
 
     `path`:  The path to the repository
@@ -1533,6 +1647,8 @@ def init_repository(char *path, bint bare=False):
 
     cdef git_repository *repo
     cdef Repository py_repo
+
+    path = encode_path(path)
 
     err_str(path, git_repository_init(&repo, path, bare))
     try:
