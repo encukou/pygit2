@@ -94,6 +94,9 @@ cdef extern from "git2.h":
     git_signature *git_commit_committer(git_commit *commit)
     git_time_t git_commit_time(git_commit *commit)
 
+    # errors.h
+    char *git_lasterror()
+
     # index.h
     ctypedef struct git_index_time:
         git_time_t seconds
@@ -224,15 +227,6 @@ cdef extern from "git2.h":
     unsigned int git_tree_entry_attributes(git_tree_entry *entry)
     int git_tree_lookup(git_tree **tree, git_repository *repo, git_oid *id)
     void git_tree_close(git_tree *tree)
-
-cdef git_lasterror():
-    cdef char * lasterror
-    lasterror = git2.git_lasterror()
-
-    if lasterror is NULL:
-        return "No error"
-    else:
-        return lasterror
 
 # Constants
 # Workaround for Cython bug 92 (http://trac.cython.org/cython_trac/ticket/92)
