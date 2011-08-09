@@ -380,7 +380,9 @@ cdef int read_status_cb(char *path, unsigned int status_flags,
     """ This is the callback that will be called in git_status_foreach. It
     will be called for every path.
     """
-    (<object>payload_dict)[path] = status_flags
+    cdef Repository r
+    d, r = (<tuple>payload_dict)
+    d[r.decode(path)] = status_flags
 
     return git2.GIT_SUCCESS
 
@@ -1293,7 +1295,8 @@ cdef class Repository(object):
         """
 
         payload_dict = {}
-        git_status_foreach(self.repo, read_status_cb, <void*>payload_dict)
+        payload = (payload_dict, self)
+        git_status_foreach(self.repo, read_status_cb, <void*>payload)
         return payload_dict
 
     cpdef create_tag(self, tag_name, sha, git_otype target_type, tagger,
