@@ -382,7 +382,7 @@ cdef int read_status_cb(char *path, unsigned int status_flags,
     """
     (<object>payload_dict)[path] = status_flags
 
-    return git2.GIT_SUCCESS;
+    return git2.GIT_SUCCESS
 
 cdef py_str_to_git_oid(py_str, git_oid *oid):
     """Convert a Python string with the a SHA to a git_oid
@@ -487,7 +487,7 @@ cdef class TreeEntry(object):
 
         cdef git_oid *entry_oid
 
-        entry_oid = git_tree_entry_id(self.entry);
+        entry_oid = git_tree_entry_id(self.entry)
         return (<Tree?>self.tree).repo.lookup_object(entry_oid, GIT_OBJ_ANY)
 
 cdef wrap_tree_entry(git_tree_entry *entry, tree):
@@ -628,7 +628,7 @@ cdef class Tree(GitObject):
         cdef size_t len
         cdef long slen
 
-        len = slen = git_tree_entrycount(<git_tree*>self.obj);
+        len = slen = git_tree_entrycount(<git_tree*>self.obj)
         if index >= slen:
             raise IndexError(index)
         elif index < -slen:
@@ -652,7 +652,7 @@ cdef class Tree(GitObject):
         cdef git_tree_entry *entry
 
         e_name = self.repo.encode(name)
-        entry = git_tree_entry_byname(self._tree(), e_name);
+        entry = git_tree_entry_byname(self._tree(), e_name)
         if entry is NULL:
             raise KeyError(name)
         return wrap_tree_entry(entry, self)
@@ -788,7 +788,7 @@ cdef class Reference(object):
         def __get__(self):
             cdef char *name
 
-            name = git_reference_target(self.reference);
+            name = git_reference_target(self.reference)
             if name is NULL:
                 raise ValueError("Not target available")
 
@@ -913,7 +913,7 @@ cdef wrap_index_entry(git_index_entry *entry, index):
     cdef IndexEntry py_entry
 
     py_entry = IndexEntry.__new__(IndexEntry, index)
-    py_entry.entry = entry;
+    py_entry.entry = entry
     return py_entry
 
 cdef class Index(object):
@@ -977,7 +977,7 @@ cdef class Index(object):
         cdef int idx
 
         path = self.repo.encode(path)
-        idx = git_index_find(self.index, path);
+        idx = git_index_find(self.index, path)
         if idx == git2.GIT_ENOTFOUND:
             return False
         elif idx < 0:
@@ -1257,11 +1257,11 @@ cdef class Repository(object):
         cdef git_otype otype
         cdef GitObject py_obj
 
-        error = git_object_lookup(&obj, self.repo, oid, type);
+        error = git_object_lookup(&obj, self.repo, oid, type)
         if error < 0:
-            git_oid_fmt(hex, oid);
-            hex[git2.GIT_OID_HEXSZ] = '\0';
-            err_str(hex, error);
+            git_oid_fmt(hex, oid)
+            hex[git2.GIT_OID_HEXSZ] = '\0'
+            err_str(hex, error)
 
         if obj is NULL:
             raise MemoryError()
@@ -1325,7 +1325,7 @@ cdef class Repository(object):
         if error < 0:
             git_oid_fmt(hex, &c_oid)
             hex[git2.GIT_OID_HEXSZ] = '\0'
-            err_str(hex, error);
+            err_str(hex, error)
 
         err = git_tag_create(&c_oid, self.repo, tag_name, target, c_tagger,
                 message, 0)
@@ -1417,7 +1417,7 @@ cdef class Repository(object):
         odb = git_repository_database(self.repo)
 
         data = bytes(self.encode(data))
-        error = git_odb_open_wstream(&stream, odb, len(data), type);
+        error = git_odb_open_wstream(&stream, odb, len(data), type)
         if error == git2.GIT_SUCCESS:
             stream.write(stream, data, len(data))
             error = stream.finalize_write(&oid, stream)
@@ -1435,7 +1435,7 @@ cdef class Repository(object):
         def __get__(self):
             cdef char *c_path
 
-            c_path = git_repository_path(self.repo, GIT_REPO_PATH_WORKDIR);
+            c_path = git_repository_path(self.repo, GIT_REPO_PATH_WORKDIR)
             if c_path is NULL:
                 return None
 
@@ -1448,7 +1448,7 @@ cdef class Repository(object):
         def __get__(self):
             cdef char *c_path
 
-            c_path = git_repository_path(self.repo, GIT_REPO_PATH);
+            c_path = git_repository_path(self.repo, GIT_REPO_PATH)
             if c_path is NULL:
                 return None
 
@@ -1623,7 +1623,7 @@ cdef class Repository(object):
 
             finally:
                 for j in range(last_parent + 1):
-                    git_commit_close(parents[i]);
+                    git_commit_close(parents[i])
                 free(parents)
 
         finally:
