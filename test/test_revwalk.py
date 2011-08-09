@@ -33,7 +33,7 @@ __author__ = 'jdavid@itaapy.com (J. David Ibáñez)'
 import unittest
 
 from pygit2 import GIT_SORT_TIME, GIT_SORT_REVERSE
-import utils
+from . import utils
 
 # In the order given by git log
 log = [

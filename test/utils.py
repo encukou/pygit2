@@ -28,6 +28,7 @@
 __author__ = 'dborowitz@google.com (Dave Borowitz)'
 
 import os
+import sys
 import shutil
 import tarfile
 import tempfile
@@ -44,8 +45,9 @@ class BaseTestCase(unittest.TestCase):
     def assertRaisesWithArg(self, exc_class, arg, func, *args, **kwargs):
         try:
             func(*args, **kwargs)
-        except exc_class, e:
-            self.assertEqual((arg,), e.args)
+        except exc_class:
+            type, value, traceback = sys.exc_info()
+            self.assertEqual((arg,), value.args)
         else:
             self.fail('%s(%r) not raised' % (exc_class.__name__, arg))
 

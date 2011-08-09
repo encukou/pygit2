@@ -33,7 +33,7 @@ __author__ = 'mike.perdide@gmail.com (Julien Miotte)'
 import unittest
 
 import pygit2
-import utils
+from . import utils
 
 EXPECTED = {
  "current_file":                    pygit2.GIT_STATUS_CURRENT,
@@ -70,7 +70,7 @@ class StatusTest(utils.DirtyRepoTestCase):
             For every file in the status, check that the flags are correct.
         """
         git_status = self.repo.status()
-        for filepath, status in git_status.items():
+        for filepath, status in list(git_status.items()):
             self.assertTrue(filepath in git_status)
             self.assertEqual(status, git_status[filepath])
 

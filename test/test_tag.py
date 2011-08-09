@@ -32,7 +32,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import unittest
 
 import pygit2
-import utils
+from . import utils
 
 TAG_SHA = '3d2962987c695a29f1f80b6c3aa4ec046ef44369'
 

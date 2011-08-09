@@ -32,14 +32,15 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import binascii
 import unittest
 import os
+import sys
 from os.path import join, abspath
 
 from pygit2 import (GitError, GIT_OBJ_ANY, GIT_OBJ_BLOB, GIT_OBJ_COMMIT,
         init_repository)
-import utils
+from . import utils
 
 A_HEX_SHA = 'af431f20fc541ed6d5afede3e2dc7160f6f01f16'
-A_BIN_SHA = binascii.unhexlify(A_HEX_SHA)
+A_BIN_SHA = binascii.unhexlify(A_HEX_SHA.encode('ascii'))
 
 
 class RepositoryTest(utils.BareRepoTestCase):
@@ -51,10 +52,10 @@ class RepositoryTest(utils.BareRepoTestCase):
         ab = self.repo.read(A_BIN_SHA)
         a = self.repo.read(A_HEX_SHA)
         self.assertEqual(ab, a)
-        self.assertEqual((GIT_OBJ_BLOB, 'a contents\n'), a)
+        self.assertEqual((GIT_OBJ_BLOB, 'a contents\n'.encode('ascii')), a)
 
         a2 = self.repo.read('7f129fd57e31e935c6d60a0c794efe4e6927664b')
-        self.assertEqual((GIT_OBJ_BLOB, 'a contents 2\n'), a2)
+        self.assertEqual((GIT_OBJ_BLOB, 'a contents 2\n'.encode('ascii')), a2)
 
     def test_write(self):
         data = "hello world"
@@ -65,7 +66,9 @@ class RepositoryTest(utils.BareRepoTestCase):
         self.assertEqual(len(hex_sha), 40)
 
         # works as buffer as well
-        self.assertEqual(hex_sha, self.repo.write(GIT_OBJ_BLOB, buffer(data)))
+        if sys.version_info < (3, 0):
+            self.assertEqual(hex_sha, self.repo.write(GIT_OBJ_BLOB,
+                    buffer(data)))
 
     def test_contains(self):
         self.assertRaises(TypeError, lambda: 123 in self.repo)
@@ -77,7 +80,7 @@ class RepositoryTest(utils.BareRepoTestCase):
         self.assertRaises(TypeError, lambda: self.repo[123])
         self.assertEqual(self.repo[A_BIN_SHA].sha, A_HEX_SHA)
         a = self.repo[A_HEX_SHA]
-        self.assertEqual('a contents\n', a.read_raw())
+        self.assertEqual('a contents\n'.encode('ascii'), a.read_raw())
         self.assertEqual(A_HEX_SHA, a.sha)
         self.assertEqual(GIT_OBJ_BLOB, a.type)
 

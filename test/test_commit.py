@@ -32,7 +32,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import unittest
 
 from pygit2 import GIT_OBJ_COMMIT
-import utils
+from . import utils
 
 COMMIT_SHA = '5fe808e8953c12735680c257f56600cb0de44b10'
 

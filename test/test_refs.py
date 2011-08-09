@@ -32,7 +32,7 @@
 __author__ = 'david.versmisse@itaapy.com (David Versmisse)'
 
 import unittest
-import utils
+from . import utils
 from pygit2 import GIT_REF_OID, GIT_REF_SYMBOLIC
 
 

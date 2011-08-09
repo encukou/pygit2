@@ -33,7 +33,7 @@ import operator
 import unittest
 
 import pygit2
-import utils
+from . import utils
 
 TREE_SHA = '967fce8df97cc71722d3c2a5930ef3e6f1d27b12'
 SUBTREE_SHA = '614fd9a3094bf618ea938fffc00e7d1a54f89ad0'
@@ -57,25 +57,27 @@ class TreeTest(utils.BareRepoTestCase):
         self.assertEqual(3, len(tree))
         a_sha = '7f129fd57e31e935c6d60a0c794efe4e6927664b'
         self.assertTrue('a' in tree)
-        self.assertTreeEntryEqual(tree[0], a_sha, 'a', 0100644)
-        self.assertTreeEntryEqual(tree[-3], a_sha, 'a', 0100644)
-        self.assertTreeEntryEqual(tree['a'], a_sha, 'a', 0100644)
+        self.assertTreeEntryEqual(tree[0], a_sha, 'a', int('100644', 8))
+        self.assertTreeEntryEqual(tree[-3], a_sha, 'a', int('100644', 8))
+        self.assertTreeEntryEqual(tree['a'], a_sha, 'a', int('100644', 8))
 
         b_sha = '85f120ee4dac60d0719fd51731e4199aa5a37df6'
         self.assertTrue('b' in tree)
-        self.assertTreeEntryEqual(tree[1], b_sha, 'b', 0100644)
-        self.assertTreeEntryEqual(tree[-2], b_sha, 'b', 0100644)
-        self.assertTreeEntryEqual(tree['b'], b_sha, 'b', 0100644)
+        self.assertTreeEntryEqual(tree[1], b_sha, 'b', int('100644', 8))
+        self.assertTreeEntryEqual(tree[-2], b_sha, 'b', int('100644', 8))
+        self.assertTreeEntryEqual(tree['b'], b_sha, 'b', int('100644', 8))
 
     def test_read_subtree(self):
         tree = self.repo[TREE_SHA]
         subtree_entry = tree['c']
-        self.assertTreeEntryEqual(subtree_entry, SUBTREE_SHA, 'c', 0040000)
+        self.assertTreeEntryEqual(subtree_entry, SUBTREE_SHA, 'c',
+                int('040000', 8))
 
         subtree = subtree_entry.to_object()
         self.assertEqual(1, len(subtree))
         self.assertTreeEntryEqual(
-          subtree[0], '297efb891a47de80be0cfe9c639e4b8c9b450989', 'd', 0100644)
+          subtree[0], '297efb891a47de80be0cfe9c639e4b8c9b450989', 'd',
+                int('100644', 8))
 
     # XXX Creating new trees was removed from libgit2 by v0.11.0, we
     # deactivate this test temporarily, since the feature may come back in
@@ -83,15 +85,15 @@ class TreeTest(utils.BareRepoTestCase):
     def xtest_new_tree(self):
         tree = pygit2.Tree(self.repo)
         self.assertEqual(0, len(tree))
-        tree.add_entry('1' * 40, 'x', 0100644)
-        tree.add_entry('2' * 40, 'y', 0100755)
+        tree.add_entry('1' * 40, 'x', int('100644', 8))
+        tree.add_entry('2' * 40, 'y', int('100755', 8))
         self.assertEqual(2, len(tree))
         self.assertTrue('x' in tree)
         self.assertTrue('y' in tree)
         self.assertRaisesWithArg(KeyError, '1' * 40, tree['x'].to_object)
 
-        tree.add_entry('3' * 40, 'z1', 0100644)
-        tree.add_entry('4' * 40, 'z2', 0100644)
+        tree.add_entry('3' * 40, 'z1', int('100644', 8))
+        tree.add_entry('4' * 40, 'z2', int('100644', 8))
         self.assertEqual(4, len(tree))
         del tree['z1']
         del tree[2]

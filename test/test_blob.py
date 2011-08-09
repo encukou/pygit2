@@ -32,7 +32,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import unittest
 
 import pygit2
-import utils
+from . import utils
 
 BLOB_SHA = 'af431f20fc541ed6d5afede3e2dc7160f6f01f16'
 
@@ -43,8 +43,9 @@ class BlobTest(utils.BareRepoTestCase):
         blob = self.repo[BLOB_SHA]
         self.assertTrue(isinstance(blob, pygit2.Blob))
         self.assertEqual(pygit2.GIT_OBJ_BLOB, blob.type)
-        self.assertEqual('a contents\n', blob.data)
-        self.assertEqual('a contents\n', blob.read_raw())
+        self.assertEqual('a contents\n'.encode('ascii'), blob.data)
+        self.assertEqual('a contents\n', blob.string)
+        self.assertEqual('a contents\n'.encode('ascii'), blob.read_raw())
 
 
 if __name__ == '__main__':
