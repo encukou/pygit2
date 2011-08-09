@@ -1490,6 +1490,13 @@ cdef class Repository(object):
 
             return self._index or None
 
+    property encoding:
+        def __get__(self):
+            return self.encoding
+
+        def __set__(self, value):
+            self.encoding = value
+
     def lookup_reference(self, name):
         """Lookup a reference by its name in this repository.
         """
