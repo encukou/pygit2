@@ -79,7 +79,7 @@ cdef extern from "git2.h":
     void git_oid_fmt(char *str, git_oid *oid)
 
     # commit.h
-    char *git_commit_message_short(git_commit *commit)
+    char *git_commit_message_encoding(git_commit *commit)
     char *git_commit_message(git_commit *commit)
     int git_commit_lookup(git_commit **commit, git_repository *repo,
         git_oid *id)
@@ -87,6 +87,7 @@ cdef extern from "git2.h":
     git_oid *git_commit_parent_oid(git_commit *commit, unsigned int n)
     int git_commit_create(git_oid *oid, git_repository *repo,
         char *update_ref, git_signature *author, git_signature *committer,
+        char *message_encoding,
         char *message, git_tree *tree, int parent_count, git_commit *parents[])
     void git_commit_close(git_commit *commit)
     int git_commit_tree(git_tree **tree_out, git_commit *commit)
@@ -559,11 +560,15 @@ cdef class Commit(GitObject):
     cdef git_commit* _commit(self):
         return <git_commit*>self.obj
 
-    property message_short:
-        """The short (one line) message of this commit."""
+    property message_encoding:
+        """The encoding used by this commit."""
 
         def __get__(self):
-            return self.repo.decode(git_commit_message_short(self._commit()))
+            cdef char *encoding = git_commit_message_encoding(self._commit())
+            if encoding is NULL:
+                return None
+            else:
+                return encoding.decode('ascii')
 
     property message:
         """The full message of this commit."""
@@ -1635,7 +1640,7 @@ cdef class Repository(object):
                     last_parent = i
 
                 err(git_commit_create(&oid, self.repo, c_update_ref,
-                        c_author, c_committer, message, c_tree,
+                        c_author, c_committer, NULL, message, c_tree,
                         len(parent_list), parents))
 
                 return git_oid_to_py_str(&oid)
