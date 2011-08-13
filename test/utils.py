@@ -30,6 +30,7 @@ __author__ = 'dborowitz@google.com (Dave Borowitz)'
 import os
 import sys
 import shutil
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -46,8 +47,10 @@ class BaseTestCase(unittest.TestCase):
         try:
             func(*args, **kwargs)
         except exc_class:
-            type, value, traceback = sys.exc_info()
-            self.assertEqual((arg,), value.args)
+            # XXX Use the 'exc_class as exc_value' syntax as soon as we drop
+            # support for Python 2.5
+            exc_value = sys.exc_info()[1]
+            self.assertEqual((arg,), exc_value.args)
         else:
             self.fail('%s(%r) not raised' % (exc_class.__name__, arg))
 
